@@ -11,7 +11,7 @@ State-Space Kinetic Ising Model for neural spike train analysis. Implements an E
 ```bash
 # From within the package directory
 cd /mnt/disk1/home/hideaki/Dropbox/lab/github/ssll_kinetic
-python -m unittest testing.TestEstimator.test_1_fo_varying -v
+python -m unittest testing -v
 ```
 
 Uses `unittest` (no pytest config).
@@ -34,7 +34,12 @@ Single-level Python package (`ssll_kinetic/`) with no subpackages:
   - M-step: `get_diagonal_Q` (default), `get_Q` (full dense), `get_scalar_q` (isotropic) + `get_Sigma` (init_cov update)
 - **`probability.py`** — `log_marginal()`: vectorized log marginal likelihood using `np.linalg.slogdet` and `np.einsum`
 - **`synthesis.py`** — Data generation: `get_THETA_gaussian_process`, `get_THETA_gaussian_process_fixed_seed_per_neuron`, `get_S_function` (spike sampling), `shuffle_spikes`
-- **`testing.py`** — Unit tests
+- **`macro.py`** — Entropy flow computation from estimated parameters (theta_s):
+  - `calculate_entropy_flow(emd)` — main entry: returns forward/reverse/net entropy flow time series + mean-field spike probabilities
+  - `Dissipation_en(a, m, m_p)` — per-time-step forward/reverse/net entropy flow per neuron
+  - `computation_m(a, m_p)` — mean-field spike probability update
+  - Two equivalent formulations: chi-based (`update_S`, `update_S_re`) and h-psi decomposition (`update_S_alt`, `update_S_re_alt`); see Eqs. 47-48, 57-58 in the paper
+- **`testing.py`** — 11 unit tests covering EM, entropy flow, parameter recovery, and formulation equivalence
 
 ## Data Dimensions
 

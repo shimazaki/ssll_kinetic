@@ -387,6 +387,56 @@ class TestEstimator(unittest.TestCase):
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
+    def test_10_entropy_formulation_equivalence(self):
+        """Test chi-based vs h-psi decomposition of conditional entropy.
+
+        The chi-based formulation (update_S) integrates chi(h) directly (Eq. 48).
+        The h-psi formulation (update_S_alt) uses the identity
+        chi(h) = -[r(h)*h - psi(h)] (Eq. 47) to decompose conditional entropy
+        into expected natural parameter and log-partition terms.
+
+        Both formulations should agree to machine precision since
+        E[chi(h)] = E[-r(h)*h + psi(h)] = -(E[r(h)*h] - E[psi(h)]).
+        """
+        print("Test Entropy Formulation Equivalence (chi vs h-psi).")
+        start_cpu_time = time.process_time()
+
+        THETA, spikes = generate_test_data(self.T, self.R, self.N)
+        emd = run_em_with_q_method(spikes, q_method='diagonal')
+
+        # Compute mean spikes and entropy using both formulations
+        mp = np.mean(emd.spikes, axis=(0, 1))
+        for t in range(min(emd.T - 1, 5)):  # Test first 5 time steps
+            m_p = mp if t == 0 else m
+            THETA_st = emd.theta_s[t]
+            H = THETA_st[:, 0]
+            J = np.delete(THETA_st, 0, 1)
+            m = macro.update_m_P_t1_o1(H, J, m_p)
+
+            # Chi-based (main formulation)
+            S_fwd_chi = macro.update_S(H, J, m_p)
+            S_rev_chi = macro.update_S_re(H, J, m, m_p)
+
+            # h-psi decomposition (alternative formulation)
+            S_fwd_alt = macro.update_S_alt(H, J, m, m_p)
+            S_rev_alt = macro.update_S_re_alt(H, J, m, m_p)
+
+            fwd_diff = abs(np.sum(S_fwd_chi) - S_fwd_alt)
+            rev_diff = abs(np.sum(S_rev_chi) - S_rev_alt)
+
+            print('t=%d: forward diff=%.2e, reverse diff=%.2e' %
+                  (t, fwd_diff, rev_diff))
+
+            self.assertLess(fwd_diff, 1e-6,
+                "Forward entropy formulations should agree at t=%d "
+                "(diff=%.2e)" % (t, fwd_diff))
+            self.assertLess(rev_diff, 1e-6,
+                "Reverse entropy formulations should agree at t=%d "
+                "(diff=%.2e)" % (t, rev_diff))
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
 
 if __name__ == "__main__":
     unittest.main()

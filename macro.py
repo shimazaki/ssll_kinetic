@@ -96,6 +96,27 @@ def dT_sr_1(x, g, D):
     B = -np.log(1 + np.exp(g + x * np.sqrt(D)))
     return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * (A + B)
 
+def dT_sr_h(x, g, D):
+    """Integrand for expected natural parameter: Gaussian-weighted (g + x*sqrt(D)).
+    Computes E[h] where h = g + x*sqrt(D). Used in reverse entropy (Eq. 57)."""
+    A = (g + x * np.sqrt(D))
+    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * A
+
+
+def dT_sr_rh(x, g, D):
+    """Integrand for E[r(h)*h]: Gaussian-weighted r(h)*h where r(h) = sigmoid(h).
+    Used in forward entropy h-psi decomposition (Eq. 47): chi(h) = -[r(h)*h - psi(h)]."""
+    h = g + x * np.sqrt(D)
+    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * sigmoid(h) * h
+
+
+def dT_sr_psi(x, g, D):
+    """Integrand for expected log-partition: Gaussian-weighted log(1 + exp(g + x*sqrt(D))).
+    Computes E[psi(h)] where psi(h) = log(1 + exp(h)) (Eq. 47)."""
+    A = (g + x * np.sqrt(D))
+    B = np.log(1 + np.exp(A))
+    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * B
+
 ################################################################
 # Forward/reverse entropy and mean spike updates
 ################################################################
@@ -157,6 +178,96 @@ def update_S_re(H, J, m, m_p):
         phi_1[i] = integrate_1DGaussian(dT_sr_1, (g[i], D[i]))
         S[i] = -(m_p[i] * phi_1[i] + (1 - m_p[i]) * phi_0[i])
     return S
+
+
+################################################################
+# Alternative entropy formulation via h-psi decomposition
+# These compute the same quantities as update_S / update_S_re
+# but decompose conditional entropy as -(m*<h> - <psi>),
+# corresponding to Eq. 47 in the paper:
+#   chi(h) = -[r(h)*h - psi(h)]
+################################################################
+def update_S_alt(H, J, m, m_p):
+    """
+    Forward conditional entropy via h-psi decomposition (Eq. 47-48).
+
+    Uses the identity chi(h) = -[r(h)*h - psi(h)] (Eq. 47) to compute:
+      S[i] = -(<r(h_i)*h_i> - <psi(h_i)>)
+    where expectations are Gaussian-integrated over the mean-field
+    distribution with mean g = H + J*m_p and variance D = J^2 * m_p*(1-m_p).
+
+    Equivalent to update_S. The decomposition separates the contribution
+    of the expected natural parameter (weighted by firing rate) from the
+    log-partition function.
+
+    Parameters
+    ----------
+    H : np.ndarray, shape (N,)
+        External fields.
+    J : np.ndarray, shape (N, N)
+        Coupling matrix.
+    m : np.ndarray, shape (N,)
+        Current mean spikes (unused in exact formulation, kept for API consistency).
+    m_p : np.ndarray, shape (N,)
+        Previous mean spikes.
+
+    Returns
+    -------
+    float
+        Total forward entropy (sum over neurons).
+    """
+    size = len(H)
+    S = np.zeros(size)
+    rh_vals = np.zeros(size)
+    psi_vals = np.zeros(size)
+    g = H + np.dot(J, m_p)
+    D = np.dot(J**2, m_p * (1 - m_p))
+    for i in range(size):
+        rh_vals[i] = integrate_1DGaussian(dT_sr_rh, (g[i], D[i]))
+        psi_vals[i] = integrate_1DGaussian(dT_sr_psi, (g[i], D[i]))
+        S[i] = -(rh_vals[i] - psi_vals[i])
+    return np.sum(S)
+
+
+def update_S_re_alt(H, J, m, m_p):
+    """
+    Reverse conditional entropy via h-psi decomposition (Eq. 57-58).
+
+    Computes: S[i] = -(m_p[i] * <h_i> - <psi_i>)
+    where <h_i> and <psi_i> are Gaussian-integrated over the
+    mean-field distribution with mean g = H + J*m (current spikes)
+    and variance D = J^2 * m*(1-m).
+
+    Equivalent to update_S_re but uses the h-psi decomposition
+    with reversed roles of m and m_p.
+
+    Parameters
+    ----------
+    H : np.ndarray, shape (N,)
+        External fields.
+    J : np.ndarray, shape (N, N)
+        Coupling matrix.
+    m : np.ndarray, shape (N,)
+        Current mean spikes.
+    m_p : np.ndarray, shape (N,)
+        Previous mean spikes.
+
+    Returns
+    -------
+    float
+        Total reverse entropy (sum over neurons).
+    """
+    size = len(H)
+    h_vals = np.zeros(size)
+    psi_vals = np.zeros(size)
+    S = np.zeros(size)
+    g = H + np.dot(J, m)
+    D = np.dot(J**2, m * (1 - m))
+    for i in range(size):
+        h_vals[i] = integrate_1DGaussian(dT_sr_h, (g[i], D[i]))
+        psi_vals[i] = integrate_1DGaussian(dT_sr_psi, (g[i], D[i]))
+        S[i] = -(m_p[i] * h_vals[i] - psi_vals[i])
+    return np.sum(S)
 
 
 def update_m_P_t1_o1(H, J, m_p):
