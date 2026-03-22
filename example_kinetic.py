@@ -79,8 +79,15 @@ sf_bath, sr_bath, s_bath, M = macro.calculate_entropy_flow(emd)
 
 
 # ----- PLOTTING -----
-# Global module
+# Global modules
+import os
+import matplotlib
+matplotlib.use('Agg')
 import pylab
+
+# Create output directory
+fig_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fig')
+os.makedirs(fig_dir, exist_ok=True)
 
 # Set up an output figure
 fig, ax = pylab.subplots(3, 1, sharex=True, figsize=(10, 8))
@@ -112,6 +119,8 @@ ax[2].set_xlabel('Time bins')
 ax[2].set_ylabel('Entropy flow')
 ax[2].legend(loc='upper right')
 
-# Show figure!
+# Save figure
 pylab.tight_layout()
-pylab.show()
+fig_path = os.path.join(fig_dir, 'example_kinetic.png')
+pylab.savefig(fig_path, dpi=150)
+print('Figure saved to %s' % fig_path)
