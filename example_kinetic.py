@@ -61,9 +61,8 @@ import numpy as np
 import __init__  # From outside this folder, this would be 'import ssll_kinetic'
 
 # Run the EM algorithm!
-emd = __init__.run(spikes, max_iter=100, mstep=True)
 # Scalar Q (isotropic): Q^i = q * I for each neuron
-#emd = __init__.run(spikes, max_iter=100, state_cov=0.5)
+emd = __init__.run(spikes, max_iter=100, state_cov=0.5)
 # Diagonal Q: Q^i = diag(v) for each neuron
 #emd = __init__.run(spikes, max_iter=100, state_cov=0.5*np.ones(N+1))
 # Full Q: Q^i updated as full matrix

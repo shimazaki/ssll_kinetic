@@ -67,9 +67,9 @@ EXPECTED_MLLK_SINGLE_NEURON = -142.615633
 EXPECTED_MLLK_SINGLE_TRIAL = -17.170574
 
 # Expected Entropy Flow Values (diagonal Q, T=20, R=20, N=3)
-EXPECTED_TOTAL_FORWARD_ENTROPY = 10.716199
-EXPECTED_TOTAL_REVERSE_ENTROPY = 13.394292
-EXPECTED_TOTAL_NET_ENTROPY_FLOW = 2.678093
+EXPECTED_TOTAL_FORWARD_ENTROPY = 11.493761
+EXPECTED_TOTAL_REVERSE_ENTROPY = 14.172967
+EXPECTED_TOTAL_NET_ENTROPY_FLOW = 2.679206
 
 
 def generate_test_data(T, R, N, theta_seed=DEFAULT_THETA_SEED,
@@ -283,7 +283,7 @@ class TestEstimator(unittest.TestCase):
                         "Forward conditional entropy should be non-negative")
 
         # Check spike probabilities are in [0, 1]
-        active_M = M[:self.T - 1]  # Only T-1 time steps have computed values
+        active_M = M  # All T time steps have computed values
         self.assertTrue(np.all((active_M >= 0) & (active_M <= 1)),
                         "Mean-field spike probabilities should be in [0, 1]")
 

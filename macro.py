@@ -376,7 +376,7 @@ def calculate_entropy_flow(emd):
     sf_bath = np.zeros((emd.T, emd.N))
     sr_bath = np.zeros((emd.T, emd.N))
     mp = np.mean(emd.spikes, axis=(0, 1))
-    for t in range(emd.T - 1):
+    for t in range(emd.T):
         m_p = mp if t == 0 else m
         THETA_st = emd.theta_s[t]
         m = computation_m(THETA_st, m_p)
