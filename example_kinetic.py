@@ -36,7 +36,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 # Set time bins, number of trials, and number of neurons
-T, R, N = 400, 200, 2
+T, R, N = 500, 200, 2
 
 
 # ----- SPIKE SYNTHESIS -----
@@ -48,7 +48,7 @@ import synthesis
 # Set random seed for reproducibility
 np.random.seed(42)
 # Create underlying time-varying theta parameters as Gaussian processes
-THETA = synthesis.get_THETA_gaussian_process(T, N, mu=1.0, sigma=10.0)
+THETA = synthesis.get_THETA_gaussian_process(T, N, mu=-2.0, sigma=50.0, alpha=12.0)
 # Generate spike data from the kinetic Ising model
 np.random.seed(1)
 spikes = synthesis.get_S_function(T, R, N, THETA)
@@ -62,6 +62,12 @@ import __init__  # From outside this folder, this would be 'import ssll_kinetic'
 
 # Run the EM algorithm!
 emd = __init__.run(spikes, max_iter=100, mstep=True)
+# Scalar Q (isotropic): Q^i = q * I for each neuron
+#emd = __init__.run(spikes, max_iter=100, state_cov=0.5)
+# Diagonal Q: Q^i = diag(v) for each neuron
+#emd = __init__.run(spikes, max_iter=100, state_cov=0.5*np.ones(N+1))
+# Full Q: Q^i updated as full matrix
+#emd = __init__.run(spikes, max_iter=100, state_cov=0.5*np.identity(N+1))
 # Without M-step (fixed state covariance):
 #emd = __init__.run(spikes, max_iter=100, mstep=False)
 
@@ -112,9 +118,7 @@ ax[1].set_ylabel('Coupling parameters')
 
 # Entropy flow
 entropy_flow = np.sum(s_bath, axis=1)  # Sum over neurons
-mean_spikes = np.sum(M, axis=1)  # Sum over neurons
 ax[2].plot(entropy_flow, c='k', label='Entropy flow')
-ax[2].plot(mean_spikes, c='gray', linestyle='--', label='Mean spikes')
 ax[2].set_xlabel('Time bins')
 ax[2].set_ylabel('Entropy flow')
 ax[2].legend(loc='upper right')

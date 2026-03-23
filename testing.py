@@ -95,7 +95,7 @@ def generate_test_data(T, R, N, theta_seed=DEFAULT_THETA_SEED,
 
 def run_em_with_q_method(spikes, q_method='diagonal', max_iter=100):
     """
-    Runs the EM algorithm with a specified Q estimation method.
+    Runs the EM algorithm with a specified Q estimation method via state_cov.
 
     Args:
         spikes: Spike data array of shape (T+1, R, N)
@@ -104,32 +104,14 @@ def run_em_with_q_method(spikes, q_method='diagonal', max_iter=100):
     Returns:
         EMData object containing results
     """
-    from ssll_kinetic.probability import log_marginal
-
-    q_functions = {
-        'diagonal': exp_max.get_diagonal_Q,
-        'full': exp_max.get_Q,
-        'scalar': exp_max.get_scalar_q,
+    N = spikes.shape[2]
+    state_cov_map = {
+        'scalar': 0.5,
+        'diagonal': 0.5 * np.ones(N + 1),
+        'full': 0.5 * np.identity(N + 1),
     }
-    q_func = q_functions[q_method]
-
-    emd = container.EMData(spikes)
-    lmc = log_marginal(emd)
-    emd.iterations = 0
-    convergence = np.inf
-
-    while emd.iterations < max_iter and convergence > emd.CONVERGED:
-        exp_max.e_step(emd)
-        q_func(emd)
-        exp_max.get_Sigma(emd)
-        lmp = lmc
-        lmc = log_marginal(emd)
-        emd.mllk = lmc
-        emd.mllk_list.append(lmc)
-        emd.iterations += 1
-        convergence = (lmp - lmc) / lmp if lmp != 0 else 0.0
-
-    return emd
+    state_cov = state_cov_map[q_method]
+    return __init__.run(spikes, max_iter=max_iter, state_cov=state_cov)
 
 
 class TestEstimator(unittest.TestCase):

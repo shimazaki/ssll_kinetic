@@ -36,7 +36,7 @@ import container
 import exp_max
 from ssll_kinetic.probability import log_marginal
 
-def run(spikes, max_iter=100, mstep=True):
+def run(spikes, max_iter=100, mstep=True, state_cov=0.5):
     """
     Runs the Expectation-Maximization (EM) algorithm to fit the state-space kinetic Ising model
     to spike data.
@@ -49,6 +49,12 @@ def run(spikes, max_iter=100, mstep=True):
         The maximum number of EM iterations to perform. Default is 100.
     :param bool mstep:
         Whether to perform the maximization step (M-step) at each iteration. Default is True.
+    :param state_cov:
+        Controls the Q (state covariance) estimation method in the M-step:
+          - scalar (int/float): isotropic Q, updated via get_scalar_q. Default is 0.5.
+          - vector shape (N+1,): diagonal Q, updated via get_diagonal_Q
+          - matrix shape (N+1, N+1): full dense Q, updated via get_Q
+          - 0 or None: fixed Q (no update)
 
     :returns:
         container.EMData
@@ -61,7 +67,7 @@ def run(spikes, max_iter=100, mstep=True):
               - The Akaike Information Criterion (AIC) based on the final likelihood.
     """
     # Initialize the EMData container with the given spike data
-    emd = container.EMData(spikes)
+    emd = container.EMData(spikes, state_cov=state_cov)
 
     # Compute the initial marginal log likelihood
     lmc = emd.marg_llk(emd)

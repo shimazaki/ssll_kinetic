@@ -50,17 +50,25 @@ def e_step(emd):
 def m_step(emd):
     """
     Performs the M-step of the EM algorithm, updating state covariance and initial covariance matrices.
+    The Q estimation method is selected by emd.state_cov_0 (set via the state_cov parameter):
+      - scalar → get_scalar_q (isotropic)
+      - vector (N+1,) → get_diagonal_Q (diagonal)
+      - matrix (N+1, N+1) → get_Q (full dense)
 
     :param emd: container.EMData
         The data structure holding the current state of model parameters.
     :returns: None
     """
-    # Optionally choose a Q update method:
-    # get_Q(emd)
-    # get_scalar_q(emd)
-    get_diagonal_Q(emd)
+    sc0 = emd.state_cov_0
+    if np.isscalar(sc0):
+        get_scalar_q(emd)
+    else:
+        sc0 = np.asarray(sc0)
+        if sc0.ndim == 1:
+            get_diagonal_Q(emd)
+        elif sc0.ndim == 2:
+            get_Q(emd)
     get_Sigma(emd)
-    # get_init_theta(emd)
 
 def get_init_theta(emd):
     """

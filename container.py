@@ -33,7 +33,7 @@ import time
 log_marginal_functions = log_marginal
 
 class EMData:
-    def __init__(self, spikes):
+    def __init__(self, spikes, state_cov=0.5):
         """
         Container class for storing and managing the results of the EM algorithm
         for the state-space kinetic Ising model. This class holds the spike data,
@@ -49,6 +49,13 @@ class EMData:
               - R: number of trials (or runs),
               - N: number of neurons.
               A value of 1 indicates a spike and 0 indicates no spike.
+        :param state_cov:
+            Controls the Q (state covariance) estimation method:
+              - scalar (int/float): Q[i] = state_cov * I(N+1), updated via get_scalar_q
+              - vector shape (N+1,): Q[i] = diag(state_cov), updated via get_diagonal_Q
+              - matrix shape (N+1, N+1): Q[i] = state_cov, updated via get_Q
+              - 0 or None: Q[i] = zeros, no Q update (fixed)
+            Default is 0.5.
 
         Attributes:
             spikes (numpy.ndarray): Input spike data.
@@ -110,10 +117,24 @@ class EMData:
         self.dim_pram = 0
         self.aic = 0
 
-        # Initialize state covariance matrices for each neuron as 0.5 * identity.
+        # Store original state_cov input for m_step dispatch.
+        self.state_cov_0 = state_cov
+
+        # Initialize state covariance matrices based on state_cov type.
         self.state_cov = np.zeros((self.N, self.N+1, self.N+1))
-        for i in range(self.N):
-            self.state_cov[i] = 0.5 * np.identity(self.N+1)
+        if state_cov is None or (np.isscalar(state_cov) and state_cov == 0):
+            pass  # Q[i] = zeros (no dynamics)
+        elif np.isscalar(state_cov):
+            for i in range(self.N):
+                self.state_cov[i] = state_cov * np.identity(self.N+1)
+        else:
+            state_cov = np.asarray(state_cov)
+            if state_cov.ndim == 1:
+                for i in range(self.N):
+                    self.state_cov[i] = np.diag(state_cov)
+            elif state_cov.ndim == 2:
+                for i in range(self.N):
+                    self.state_cov[i] = state_cov
 
         # Initialize F matrices as identity for each neuron.
         self.F = np.zeros((self.N, self.N+1, self.N+1))
