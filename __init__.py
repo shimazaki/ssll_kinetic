@@ -27,7 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import os
 import sys
 import numpy as np
-import timeit
+import time
 
 # Ensure local imports if needed
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -77,25 +77,26 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5):
     emd.iterations = 0
 
     # EM loop
-    # while emd.iterations < max_iter:
     while emd.iterations < max_iter and (emd.convergence > emd.CONVERGED):
         print(
             f"EM Iteration: {emd.iterations} - Convergence {emd.convergence:.6f} > {emd.CONVERGED:.6f}"
         )
 
         # E-step timing
-        loop = 1
-        e_step_time = timeit.timeit(lambda: exp_max.e_step(emd), number=loop)
-        emd.e_step_time = e_step_time / loop
+        t0 = time.perf_counter()
+        exp_max.e_step(emd)
+        emd.e_step_time = time.perf_counter() - t0
 
         # M-step timing (only if mstep=True)
         if mstep:
-            m_step_time = timeit.timeit(lambda: exp_max.m_step(emd), number=loop)
-            emd.m_step_time = m_step_time / loop
+            t0 = time.perf_counter()
+            exp_max.m_step(emd)
+            emd.m_step_time = time.perf_counter() - t0
 
         lmp = lmc
+        t0 = time.perf_counter()
         lmc = emd.marg_llk(emd)
-        emd.llk_time = timeit.timeit(lambda: emd.marg_llk(emd), number=loop) / loop
+        emd.llk_time = time.perf_counter() - t0
 
         emd.mllk_list.append(lmc)
         emd.mllk = lmc
@@ -104,31 +105,6 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5):
 
         emd.iterations += 1
         emd.convergence = (lmp - lmc) / lmp if lmp != 0 else 0.0
-
-
-
-#         # Update previous log likelihood
-#         lmp = lmc
-#         # Compute new log likelihood
-#         lmc = emd.marg_llk(emd)
-
-#         # Log-likelihood calculation timing
-#         llk_time = timeit.timeit(lambda: emd.marg_llk(emd), number=loop)
-#         emd.llk_time = llk_time / loop
-
-#         # Store marginal log likelihood and state covariance
-#         emd.mllk_list.append(lmc)
-#         emd.mllk = lmc
-#         emd.Q_list.append(emd.state_cov)
-#         emd.iterations_list.append(emd.iterations)
-
-#         # Increment iteration count
-#         emd.iterations += 1
-
-#         # Compute convergence based on relative change in log likelihood
-#         emd.convergence = (lmp - lmc) / lmp if lmp != 0 else 0
-
-
 
     # Compute AIC after finishing
     emd.aic = -2 * emd.mllk + 2 * emd.dim_pram
