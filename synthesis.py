@@ -25,7 +25,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import numpy as np
-import random
 
 def get_THETA_gaussian_process(T, N, mu=1.0, sigma=5.0, alpha=1.0):
     """

@@ -55,8 +55,6 @@ spikes = synthesis.get_S_function(T, R, N, THETA)
 
 
 # ----- ALGORITHM EXECUTION -----
-# Global module
-import numpy as np
 # Local module
 import __init__  # From outside this folder, this would be 'import ssll_kinetic'
 

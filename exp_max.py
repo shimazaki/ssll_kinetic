@@ -430,11 +430,9 @@ def smoothing_function(emd):
     """
     emd.theta_s[emd.T - 1] = emd.theta_f[emd.T - 1]
     emd.sigma_s[emd.T - 1] = emd.sigma_f[emd.T - 1]
-    sigma_o_inv = np.linalg.inv(emd.sigma_o)
-
     for tt in range(emd.T - 1):
         t = emd.T - 2 - tt
-        emd.A[t] = np.einsum('ijk,ikl->ijl', emd.sigma_f[t], sigma_o_inv[t + 1])
+        emd.A[t] = np.einsum('ijk,ikl->ijl', emd.sigma_f[t], emd.sigma_o_i[t + 1])
 
         tmp = np.einsum(
             'ijk,ik->ij',

@@ -25,12 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import numpy as np
-import pdb
 from ssll_kinetic.probability import *
-import time
-
-# Set function pointer for log marginal likelihood computation.
-log_marginal_functions = log_marginal
 
 class EMData:
     def __init__(self, spikes, state_cov=0.5):
@@ -139,7 +134,7 @@ class EMData:
         # Initialize F matrices as identity for each neuron.
         self.F = np.zeros((self.N, self.N+1, self.N+1))
         for i in range(self.N):
-            self.F[i] = 1 * np.identity(self.N+1)
+            self.F[i] = np.identity(self.N+1)
 
         # Initialize initial covariance matrices as identity.
         self.init_cov = np.zeros((self.N, self.N+1, self.N+1))
@@ -148,7 +143,7 @@ class EMData:
         self.init_cov_i = np.linalg.inv(self.init_cov)
 
         # Initialize initial theta parameters as zeros.
-        self.init_theta = 0 * np.ones((self.N, self.N+1))
+        self.init_theta = np.zeros((self.N, self.N+1))
 
         # Timing metrics.
         self.e_step_time = 0
@@ -187,7 +182,7 @@ class EMData:
         self.lag_one_covariance = np.zeros((self.T, self.N, self.N+1, self.N+1))
 
         # Set the marginal log likelihood function.
-        self.marg_llk = log_marginal_functions
+        self.marg_llk = log_marginal
         self.mllk = np.inf
         self.mllk_list = []
         self.iterations_list = []
