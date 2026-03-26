@@ -39,36 +39,38 @@ def e_step(emd):
         The data structure holding all necessary model parameters and spike data.
     :returns: None
     """
-    filter_function(emd)
+    e_step_filter(emd)
     # If parallel filtering is preferred, uncomment:
-    #filter_function_Parallel(emd)
+    #e_step_filter_parallel(emd)
 
-    smoothing_function(emd)
+    e_step_smooth(emd)
     # If parallel smoothing is preferred, uncomment:
-    # smoothing_function_Parallel(emd)
+    # e_step_smooth_parallel(emd)
 
 def m_step(emd):
     """
     Performs the M-step of the EM algorithm, updating state covariance and initial covariance matrices.
     The Q estimation method is selected by emd.state_cov_0 (set via the state_cov parameter):
-      - scalar → get_scalar_q (isotropic)
+      - scalar → get_scalar_Q (isotropic)
       - vector (N+1,) → get_diagonal_Q (diagonal)
-      - matrix (N+1, N+1) → get_Q (full dense)
+      - matrix (N+1, N+1) → get_full_Q (full dense)
 
     :param emd: container.EMData
         The data structure holding the current state of model parameters.
     :returns: None
     """
     sc0 = emd.state_cov_0
-    if np.isscalar(sc0):
-        get_scalar_q(emd)
+    if sc0 is None or (np.isscalar(sc0) and sc0 == 0):
+        pass  # Stationary: keep Q fixed at zero
+    elif np.isscalar(sc0):
+        get_scalar_Q(emd)
     else:
         sc0 = np.asarray(sc0)
         if sc0.ndim == 1:
             get_diagonal_Q(emd)
         elif sc0.ndim == 2:
-            get_Q(emd)
-    get_Sigma(emd)
+            get_full_Q(emd)
+    get_init_cov(emd)
 
 def get_init_theta(emd):
     """
@@ -84,7 +86,7 @@ def get_init_theta(emd):
         emd.init_theta[i] = emd.theta_s[0, i]
     return emd.init_theta
 
-def get_Sigma(emd):
+def get_init_cov(emd):
     """
     Updates the initial covariance matrices based on the smoothed estimates at time 0.
 
@@ -99,7 +101,7 @@ def get_Sigma(emd):
         emd.init_cov[i] = emd.sigma_s[0, i] + np.outer(diff, diff)
     return emd.init_cov
 
-def get_Q(emd):
+def get_full_Q(emd):
     """
     Computes a fully dense state covariance matrix Q for each neuron.
 
@@ -122,9 +124,13 @@ def get_Q(emd):
                 + np.outer(emd.theta_s[t-1, i], emd.theta_s[t-1, i])
                 + emd.sigma_s[t-1, i]
             )
-        Q[i] = tmp / (emd.T - 1)
-        # Symmetrize
-        Q[i] = (Q[i] + Q[i].T) / 2
+        if emd.T == 1:
+            # No transitions to estimate Q from
+            Q[i] = emd.state_cov[i]
+        else:
+            Q[i] = tmp / (emd.T - 1)
+            # Symmetrize
+            Q[i] = (Q[i] + Q[i].T) / 2
     emd.state_cov = Q
     # Update estimated dimension of parameters (example formula)
     emd.dim_pram = (
@@ -133,7 +139,7 @@ def get_Q(emd):
     )
     return emd.state_cov
 
-def get_scalar_q(emd):
+def get_scalar_Q(emd):
     """
     Computes a single scalar q (isotropic) for each neuron and updates the state covariance.
 
@@ -157,8 +163,12 @@ def get_scalar_q(emd):
                 + np.outer(emd.theta_s[t-1, i], emd.theta_s[t-1, i])
                 + emd.sigma_s[t-1, i]
             )
-        Q[i] = tmp / (emd.T - 1)
-        Q[i] = (Q[i] + Q[i].T) / 2
+        if emd.T == 1:
+            # No transitions to estimate Q from
+            pass
+        else:
+            Q[i] = tmp / (emd.T - 1)
+            Q[i] = (Q[i] + Q[i].T) / 2
 
         trace_Q = np.trace(Q[i])
         qi = trace_Q / (emd.N + 1)
@@ -193,8 +203,12 @@ def get_diagonal_Q(emd):
                 + np.outer(emd.theta_s[t-1, i], emd.theta_s[t-1, i])
                 + emd.sigma_s[t-1, i]
             )
-        diag_values = np.diag(tmp) / (emd.T - 1)
-        Q[i] = np.diag(diag_values)
+        if emd.T == 1:
+            # No transitions to estimate Q from
+            Q[i] = emd.state_cov[i]
+        else:
+            diag_values = np.diag(tmp) / (emd.T - 1)
+            Q[i] = np.diag(diag_values)
 
     emd.state_cov = Q
     emd.dim_pram = (
@@ -202,7 +216,7 @@ def get_diagonal_Q(emd):
     )
     return emd.state_cov
 
-def cal_eta_G(theta, R, spikes_t):
+def compute_eta_G(theta, R, spikes_t):
     """
     Computes the first derivative (eta) and the Fisher information matrix (G) using Einstein summation.
 
@@ -227,7 +241,7 @@ def cal_eta_G(theta, R, spikes_t):
     G = np.einsum('ki,kjl->ijl', r * (1 - r), np.einsum('kj,kl->kjl', F1, F1))
     return eta, G
 
-def filter_function(emd):
+def e_step_filter(emd):
     """
     Filters the parameter estimates forward in time using Newton-Raphson updates (Einstein summation).
     Complexity: O(N * R * T)
@@ -251,7 +265,7 @@ def filter_function(emd):
         iterations = 0
 
         while max_dlpo > GA_CONVERGENCE:
-            eta, G = cal_eta_G(emd.theta_f[t], emd.R, emd.spikes[t])
+            eta, G = compute_eta_G(emd.theta_f[t], emd.R, emd.spikes[t])
             dlpo = - (emd.FSUM[t] - eta) + np.einsum(
                 'ijk,ik->ij',
                 emd.sigma_o_i[t],
@@ -278,7 +292,7 @@ def filter_function(emd):
     return emd.theta_f, emd.sigma_f, emd.sigma_f_i, emd.sigma_o, emd.sigma_o_i
 
 @njit
-def cal_eta_G_Para(F1, theta):
+def compute_eta_G_parallel(F1, theta):
     """
     Computes the first derivative (eta) and Fisher matrix (G) in a JIT-compiled manner for a single neuron.
 
@@ -333,7 +347,7 @@ def process_single_i(theta_f_t_i, sigma_o_i_t_i, theta_o_t_i, FSUM_t_i,
     max_dlpo = np.inf
     iterations = 0
     while max_dlpo > GA_CONVERGENCE:
-        eta, G = cal_eta_G_Para(F1, theta_f_t_i)
+        eta, G = compute_eta_G_parallel(F1, theta_f_t_i)
         dlpo = -(FSUM_t_i - eta) + np.dot(sigma_o_i_t_i, (theta_f_t_i - theta_o_t_i))
         ddlpo = G + sigma_o_i_t_i
 
@@ -357,7 +371,7 @@ def process_single_i(theta_f_t_i, sigma_o_i_t_i, theta_o_t_i, FSUM_t_i,
 
     return theta_f_t_i, ddlpo_i
 
-def filter_function_Parallel(emd):
+def e_step_filter_parallel(emd):
     """
     Performs forward filtering on each neuron in parallel using joblib.
 
@@ -416,7 +430,7 @@ def filter_function_Parallel(emd):
 
     return emd.theta_f, emd.sigma_f, emd.sigma_f_i, emd.sigma_o, emd.sigma_o_i
 
-def smoothing_function(emd):
+def e_step_smooth(emd):
     """
     Performs backward smoothing on the filtered estimates (non-parallel version).
     Complexity: O(T * N)
@@ -496,7 +510,7 @@ def process_single_i_smoothing(sigma_f_t_i, sigma_o_i_t1_i, theta_s_t1_i,
     lag_one_covariance_t_i = np.dot(A_t_i, sigma_s_t1_i)
     return theta_s_t_i, sigma_s_t_i, A_t_i, lag_one_covariance_t_i
 
-def smoothing_function_Parallel(emd):
+def e_step_smooth_parallel(emd):
     """
     Performs backward smoothing on filtered estimates using parallel processing for each neuron.
 

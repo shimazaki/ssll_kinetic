@@ -41,7 +41,7 @@ import numpy as np
 import synthesis
 import container
 import exp_max
-import macro
+import entropy_flow
 import __init__
 
 # Test Parameters
@@ -87,9 +87,9 @@ def generate_test_data(T, R, N, theta_seed=DEFAULT_THETA_SEED,
         (THETA, spikes) tuple
     """
     np.random.seed(theta_seed)
-    THETA = synthesis.get_THETA_gaussian_process(T, N)
+    THETA = synthesis.generate_thetas(T, N)
     np.random.seed(spike_seed)
-    spikes = synthesis.get_S_function(T, R, N, THETA)
+    spikes = synthesis.generate_spikes(T, R, N, THETA)
     return THETA, spikes
 
 
@@ -266,7 +266,7 @@ class TestEstimator(unittest.TestCase):
         emd = run_em_with_q_method(spikes, q_method='diagonal')
 
         # Compute entropy flow
-        sf_bath, sr_bath, s_bath, M = macro.calculate_entropy_flow(emd)
+        sf_bath, sr_bath, s_bath, M = entropy_flow.compute_entropy_flow(emd)
 
         # Check shapes
         self.assertEqual(sf_bath.shape, (self.T, self.N))
@@ -347,9 +347,9 @@ class TestEstimator(unittest.TestCase):
         R = 500  # Many trials for reliable recovery
 
         np.random.seed(DEFAULT_THETA_SEED)
-        THETA = synthesis.get_THETA_gaussian_process(T, N, mu=0.5, sigma=10.0)
+        THETA = synthesis.generate_thetas(T, N, mu=0.5, sigma=10.0)
         np.random.seed(DEFAULT_SPIKE_SEED)
-        spikes = synthesis.get_S_function(T, R, N, THETA)
+        spikes = synthesis.generate_spikes(T, R, N, THETA)
 
         emd = run_em_with_q_method(spikes, q_method='diagonal')
 
@@ -393,18 +393,18 @@ class TestEstimator(unittest.TestCase):
             THETA_st = emd.theta_s[t]
             H = THETA_st[:, 0]
             J = np.delete(THETA_st, 0, 1)
-            m = macro.update_m_P_t1_o1(H, J, m_p)
+            m = entropy_flow.update_m_P_t1_o1(H, J, m_p)
 
             # Chi-based (main formulation)
-            S_fwd_chi = macro.update_S(H, J, m_p)
-            S_rev_chi = macro.update_S_re(H, J, m, m_p)
+            S_fwd_chi = entropy_flow.update_S(H, J, m_p)
+            S_rev_chi = entropy_flow.update_S_re(H, J, m, m_p)
 
             # h-psi decomposition (alternative formulation)
-            S_fwd_alt = macro.update_S_alt(H, J, m, m_p)
-            S_rev_alt = macro.update_S_re_alt(H, J, m, m_p)
+            S_fwd_alt = entropy_flow.update_S_alt(H, J, m, m_p)
+            S_rev_alt = entropy_flow.update_S_re_alt(H, J, m, m_p)
 
-            fwd_diff = abs(np.sum(S_fwd_chi) - S_fwd_alt)
-            rev_diff = abs(np.sum(S_rev_chi) - S_rev_alt)
+            fwd_diff = np.max(np.abs(S_fwd_chi - S_fwd_alt))
+            rev_diff = np.max(np.abs(S_rev_chi - S_rev_alt))
 
             print('t=%d: forward diff=%.2e, reverse diff=%.2e' %
                   (t, fwd_diff, rev_diff))
@@ -417,6 +417,65 @@ class TestEstimator(unittest.TestCase):
                 "(diff=%.2e)" % (t, rev_diff))
 
         end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
+    def test_11_single_time_step(self):
+        """Test EM with T=1 (no state transitions, Q update skipped)."""
+        print("Test Single Time Step (T=1, R=20, N=3).")
+        start_cpu_time = time.process_time()
+
+        T, R, N = 1, 20, 3
+        THETA, spikes = generate_test_data(T, R, N)
+
+        # Should not crash despite T-1=0
+        emd = run_em_with_q_method(spikes, q_method='diagonal')
+
+        # theta_s shape: (T, N, N+1) — note T not T+1 for theta_s
+        self.assertEqual(emd.theta_s.shape[1], N)
+        self.assertEqual(emd.theta_s.shape[2], N + 1)
+
+        # Entropy flow should return shape (T, N)
+        sf_bath, sr_bath, s_bath, M = entropy_flow.compute_entropy_flow(emd)
+        self.assertEqual(sf_bath.shape, (T, N))
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
+    def test_12_stationary(self):
+        """Test run_stationary pools transitions and returns a single theta."""
+        print("Test Stationary Analysis (T=50, R=20, N=2).")
+        start_cpu_time = time.process_time()
+
+        T, R, N = 50, 20, 2
+        np.random.seed(DEFAULT_THETA_SEED)
+        THETA = synthesis.generate_thetas(T, N, mu=0.5, sigma=10.0)
+        np.random.seed(DEFAULT_SPIKE_SEED)
+        spikes = synthesis.generate_spikes(T, R, N, THETA)
+
+        emd = __init__.run(spikes, max_iter=50, stationary=True)
+
+        # Should have pooled T*R trials into a single time step
+        self.assertEqual(emd.T, 1)
+        self.assertEqual(emd.R, T * R)
+        self.assertEqual(emd.theta_s.shape, (1, N, N + 1))
+
+        # Q should remain zero throughout
+        self.assertTrue(np.all(emd.state_cov == 0),
+            "State covariance Q should remain zero for stationary model")
+
+        # dim_pram and AIC should be set
+        self.assertEqual(emd.dim_pram, N * (N + 1))
+        expected_aic = -2 * emd.mllk + 2 * emd.dim_pram
+        self.assertAlmostEqual(emd.aic, expected_aic, places=6)
+
+        # Should converge
+        self.assertLessEqual(emd.convergence, emd.CONVERGED)
+
+        end_cpu_time = time.process_time()
+        print('Stationary theta:', emd.theta_s[0])
+        print('AIC: %.4f' % emd.aic)
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 

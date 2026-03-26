@@ -17,14 +17,14 @@ Install via conda (using the `ssll` environment) or pip.
 ```python
 import numpy as np
 import ssll_kinetic
-from ssll_kinetic import synthesis, macro
+from ssll_kinetic import synthesis, entropy_flow
 
 # Generate synthetic spike data
 T, R, N = 500, 200, 2  # time bins, trials, neurons
 np.random.seed(42)
-THETA = synthesis.get_THETA_gaussian_process(T, N, mu=-2.0, sigma=50.0, alpha=12.0)
+THETA = synthesis.generate_thetas(T, N, mu=-2.0, sigma=50.0, alpha=12.0)
 np.random.seed(1)
-spikes = synthesis.get_S_function(T, R, N, THETA)
+spikes = synthesis.generate_spikes(T, R, N, THETA)
 
 # Run the EM algorithm
 emd = ssll_kinetic.run(spikes, max_iter=100)
@@ -39,9 +39,9 @@ The `state_cov` parameter controls how the state covariance matrix Q is estimate
 
 | `state_cov` value | Initial Q | M-step update | Use case |
 |---|---|---|---|
-| scalar (e.g. `0.5`, default) | `0.5 * I` | `get_scalar_q` (isotropic) | Fewest parameters |
+| scalar (e.g. `0.5`, default) | `0.5 * I` | `get_scalar_Q` (isotropic) | Fewest parameters |
 | vector shape `(N+1,)` | `diag(v)` | `get_diagonal_Q` | Per-parameter variance |
-| matrix shape `(N+1, N+1)` | copy of matrix | `get_Q` (full dense) | Cross-parameter covariance |
+| matrix shape `(N+1, N+1)` | copy of matrix | `get_full_Q` (full dense) | Cross-parameter covariance |
 | `0` or `None` | zeros | No Q update | Fixed dynamics |
 
 ```python
@@ -58,10 +58,27 @@ emd = ssll_kinetic.run(spikes, max_iter=100, state_cov=0.5*np.identity(N+1))
 emd = ssll_kinetic.run(spikes, max_iter=100, mstep=False)
 ```
 
+## Stationary analysis
+
+Pass `stationary=True` to fit a time-independent kinetic Ising model by pooling all T×R transition observations into a single time step. This is the kinetic analogue of ssll's stationary analysis.
+
+```python
+# Fit a single set of parameters across all time steps
+emd = ssll_kinetic.run(spikes, max_iter=100, stationary=True)
+
+# Single theta estimate: shape (N, N+1)
+theta = emd.theta_s[0]
+
+# AIC with k = N*(N+1) free parameters
+print(emd.aic)
+```
+
+Internally, spikes `(T+1, R, N)` are reshaped to `(2, T*R, N)` and fitted with `state_cov=0` (Q fixed at zero), so the EM estimates a single pooled theta.
+
 ## Entropy flow
 
 ```python
-sf_bath, sr_bath, s_bath, M = macro.calculate_entropy_flow(emd)
+sf_bath, sr_bath, s_bath, M = entropy_flow.compute_entropy_flow(emd)
 # sf_bath: forward conditional entropy, shape (T, N)
 # sr_bath: reverse conditional entropy, shape (T, N)
 # s_bath:  net entropy flow (dissipative), shape (T, N)

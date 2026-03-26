@@ -36,25 +36,30 @@ import container
 import exp_max
 from ssll_kinetic.probability import log_marginal
 
-def run(spikes, max_iter=100, mstep=True, state_cov=0.5):
+def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False):
     """
     Runs the Expectation-Maximization (EM) algorithm to fit the state-space kinetic Ising model
     to spike data.
 
     :param numpy.ndarray spikes:
-        A binary array of shape (T, R, N) representing spike data, where T is the number of time bins,
-        R is the number of trials, and N is the number of neurons. A value of 1 indicates a spike,
-        and 0 indicates no spike.
+        A binary array of shape (T+1, R, N) representing spike data, where T is the number of
+        time bins, R is the number of trials, and N is the number of neurons. A value of 1
+        indicates a spike, and 0 indicates no spike.
     :param int max_iter:
         The maximum number of EM iterations to perform. Default is 100.
     :param bool mstep:
         Whether to perform the maximization step (M-step) at each iteration. Default is True.
     :param state_cov:
         Controls the Q (state covariance) estimation method in the M-step:
-          - scalar (int/float): isotropic Q, updated via get_scalar_q. Default is 0.5.
+          - scalar (int/float): isotropic Q, updated via get_scalar_Q. Default is 0.5.
           - vector shape (N+1,): diagonal Q, updated via get_diagonal_Q
-          - matrix shape (N+1, N+1): full dense Q, updated via get_Q
+          - matrix shape (N+1, N+1): full dense Q, updated via get_full_Q
           - 0 or None: fixed Q (no update)
+        Ignored when stationary=True (forced to 0).
+    :param bool stationary:
+        If True, fit a time-independent model by pooling all T*R transition
+        observations into a single time step. Spikes (T+1, R, N) are reshaped
+        to (2, T*R, N) and state_cov is forced to 0. Default is False.
 
     :returns:
         container.EMData
@@ -66,6 +71,14 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5):
               - Timing information for the E-step, M-step, and log-likelihood calculations.
               - The Akaike Information Criterion (AIC) based on the final likelihood.
     """
+    if stationary:
+        T_plus_1, R, N = spikes.shape
+        T = T_plus_1 - 1
+        from_states = spikes[:T].reshape(T * R, N)
+        to_states = spikes[1:].reshape(T * R, N)
+        spikes = np.stack([from_states, to_states])  # (2, T*R, N)
+        state_cov = 0
+
     # Initialize the EMData container with the given spike data
     emd = container.EMData(spikes, state_cov=state_cov)
 
@@ -107,6 +120,8 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5):
         emd.convergence = (lmp - lmc) / lmp if lmp != 0 else 0.0
 
     # Compute AIC after finishing
+    if stationary:
+        emd.dim_pram = emd.N * (emd.N + 1)
     emd.aic = -2 * emd.mllk + 2 * emd.dim_pram
     print("Log Likelihood:", emd.mllk, "iter:", emd.iterations)
     print("emd.dim_pram:", emd.dim_pram)
