@@ -85,6 +85,14 @@ sf_bath, sr_bath, s_bath, M = entropy_flow.compute_entropy_flow(emd)
 # M:       mean-field spike probabilities, shape (T, N)
 ```
 
+For stationary models (`emd.T == 1` after pooling with `stationary=True`), `compute_entropy_flow` automatically iterates the mean-field equation m = f(theta, m) from the empirical spike mean to the fixed point m\*, then computes entropy flow at (theta, m\*, m\*). The returned arrays have shape `(1, N)`.
+
+```python
+emd = ssll_kinetic.run(spikes, max_iter=100, stationary=True)
+sf, sr, s_net, M = entropy_flow.compute_entropy_flow(emd)
+m_star = M[0]  # fixed-point spike probabilities, shape (N,)
+```
+
 ## Running tests
 
 ```bash

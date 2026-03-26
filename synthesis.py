@@ -26,7 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import numpy as np
 
-def get_THETA_gaussian_process(T, N, mu=1.0, sigma=5.0, alpha=1.0):
+def generate_thetas(T, N, mu=1.0, sigma=5.0, alpha=1.0):
     """
     Generates a 3D array of shape (T, N, N+1) containing time-varying parameters
     for a state-space model. Each neuron i's parameters are drawn from
@@ -50,10 +50,10 @@ def get_THETA_gaussian_process(T, N, mu=1.0, sigma=5.0, alpha=1.0):
     """
     THETA = np.zeros((T, N, N+1))
     for i in range(N):
-        THETA[:, i, :] = generate_thetas(T, D=N+1, mu=mu, sigma=sigma, alpha=alpha)
+        THETA[:, i, :] = _generate_thetas(T, D=N+1, mu=mu, sigma=sigma, alpha=alpha)
     return THETA
 
-def generate_thetas(T, D, mu=1.0, sigma=0.5, alpha=1.0):
+def _generate_thetas(T, D, mu=1.0, sigma=0.5, alpha=1.0):
     """
     Generates a matrix of Gaussian process-based parameters for a state-space model.
     This function uses a Cholesky decomposition to sample from a correlated Gaussian
@@ -84,7 +84,7 @@ def generate_thetas(T, D, mu=1.0, sigma=0.5, alpha=1.0):
     THETA = mu + np.dot(L, np.random.randn(T, D))
     return THETA
 
-def get_S_function(T, R, N, THETA):
+def generate_spikes(T, R, N, THETA):
     """
     Generates spike data for T time bins, R trials, and N neurons using
     a state-space Ising-like model with given parameters THETA.
@@ -158,7 +158,7 @@ def shuffle_spikes(spikes):
 
     return shuffled_spikes
 
-def get_THETA_gaussian_process_fixed_seed_per_neuron(T, N, mu=1.0, sigma=5.0, alpha=1.0, base_seed=100):
+def generate_thetas_fixed_seed(T, N, mu=1.0, sigma=5.0, alpha=1.0, base_seed=100):
     """
     Generates time-varying parameters for each neuron using a fixed but distinct
     random seed for each neuron. This can help control randomness for reproducibility

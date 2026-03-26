@@ -68,54 +68,49 @@ def integrate_1DGaussian(f, args=(), Nint=100):
     """
     x = np.linspace(-1, 1, Nint) * 4
     dx = x[1] - x[0]
-    return np.sum(f(x, *args)) * dx
+    w = (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2)
+    return np.sum(w * f(x, *args)) * dx
 
 ################################################################
 # Integrand functions
 ################################################################
 def dT_s(x, g, D):
-    """Integrand for forward entropy: Gaussian-weighted chi(g + x*sqrt(D))."""
-    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * chi(g + x * np.sqrt(D))
+    """Integrand for forward entropy: chi(g + x*sqrt(D)) (Eq. 48)."""
+    return chi(g + x * np.sqrt(D))
 
 
 def dT1(x, g, D):
-    """Integrand for mean spike update: Gaussian-weighted sigmoid(g + x*sqrt(D))."""
-    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * sigmoid(g + x * np.sqrt(D))
+    """Integrand for mean spike update: sigmoid(g + x*sqrt(D)) (Eq. 45)."""
+    return sigmoid(g + x * np.sqrt(D))
 
 
 def dT_sr_0(x, g, D):
-    """Reverse-entropy integrand for spike=0."""
-    A = 0.0
-    B = -np.log(1 + np.exp(g + x * np.sqrt(D)))
-    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * (A + B)
+    """Reverse-entropy integrand for spike=0: -log(1 + exp(h)) (Eq. 58)."""
+    return -np.log(1 + np.exp(g + x * np.sqrt(D)))
 
 
 def dT_sr_1(x, g, D):
-    """Reverse-entropy integrand for spike=1."""
-    A = (g + x * np.sqrt(D))
-    B = -np.log(1 + np.exp(g + x * np.sqrt(D)))
-    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * (A + B)
+    """Reverse-entropy integrand for spike=1: h - log(1 + exp(h)) (Eq. 58)."""
+    h = g + x * np.sqrt(D)
+    return h - np.log(1 + np.exp(h))
 
 def dT_sr_h(x, g, D):
-    """Integrand for expected natural parameter: Gaussian-weighted (g + x*sqrt(D)).
+    """Integrand for expected natural parameter: h = g + x*sqrt(D).
     Computes E[h] where h = g + x*sqrt(D). Used in reverse entropy (Eq. 57)."""
-    A = (g + x * np.sqrt(D))
-    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * A
+    return g + x * np.sqrt(D)
 
 
 def dT_sr_rh(x, g, D):
-    """Integrand for E[r(h)*h]: Gaussian-weighted r(h)*h where r(h) = sigmoid(h).
+    """Integrand for E[r(h)*h]: r(h)*h where r(h) = sigmoid(h).
     Used in forward entropy h-psi decomposition (Eq. 47): chi(h) = -[r(h)*h - psi(h)]."""
     h = g + x * np.sqrt(D)
-    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * sigmoid(h) * h
+    return sigmoid(h) * h
 
 
 def dT_sr_psi(x, g, D):
-    """Integrand for expected log-partition: Gaussian-weighted log(1 + exp(g + x*sqrt(D))).
+    """Integrand for expected log-partition: log(1 + exp(h)).
     Computes E[psi(h)] where psi(h) = log(1 + exp(h)) (Eq. 47)."""
-    A = (g + x * np.sqrt(D))
-    B = np.log(1 + np.exp(A))
-    return (1 / np.sqrt(2 * np.pi)) * np.exp(-0.5 * x**2) * B
+    return np.log(1 + np.exp(g + x * np.sqrt(D)))
 
 ################################################################
 # Forward/reverse entropy and mean spike updates
@@ -213,8 +208,8 @@ def update_S_alt(H, J, m, m_p):
 
     Returns
     -------
-    float
-        Total forward entropy (sum over neurons).
+    S : np.ndarray, shape (N,)
+        Forward entropy per neuron.
     """
     size = len(H)
     S = np.zeros(size)
@@ -226,7 +221,7 @@ def update_S_alt(H, J, m, m_p):
         rh_vals[i] = integrate_1DGaussian(dT_sr_rh, (g[i], D[i]))
         psi_vals[i] = integrate_1DGaussian(dT_sr_psi, (g[i], D[i]))
         S[i] = -(rh_vals[i] - psi_vals[i])
-    return np.sum(S)
+    return S
 
 
 def update_S_re_alt(H, J, m, m_p):
@@ -254,8 +249,8 @@ def update_S_re_alt(H, J, m, m_p):
 
     Returns
     -------
-    float
-        Total reverse entropy (sum over neurons).
+    S : np.ndarray, shape (N,)
+        Reverse entropy per neuron.
     """
     size = len(H)
     h_vals = np.zeros(size)
@@ -267,7 +262,7 @@ def update_S_re_alt(H, J, m, m_p):
         h_vals[i] = integrate_1DGaussian(dT_sr_h, (g[i], D[i]))
         psi_vals[i] = integrate_1DGaussian(dT_sr_psi, (g[i], D[i]))
         S[i] = -(m_p[i] * h_vals[i] - psi_vals[i])
-    return np.sum(S)
+    return S
 
 
 def update_m_P_t1_o1(H, J, m_p):
@@ -297,7 +292,7 @@ def update_m_P_t1_o1(H, J, m_p):
 ################################################################
 # High-level functions
 ################################################################
-def computation_m(a, m_p):
+def compute_mean_field(a, m_p):
     """
     Computes mean-field spike probabilities from parameter array a and
     previous mean spikes m_p.
@@ -320,7 +315,7 @@ def computation_m(a, m_p):
     return m
 
 
-def Dissipation_en(a, m, m_p):
+def compute_dissipation(a, m, m_p):
     """
     Computes forward and reverse conditional entropy and net entropy flow
     (dissipative entropy flow) per neuron.
@@ -351,9 +346,13 @@ def Dissipation_en(a, m, m_p):
     return S_forward, S_reverse, net_flow
 
 
-def calculate_entropy_flow(emd):
+def compute_entropy_flow(emd):
     """
     Computes entropy flow time series from an EMData object after EM convergence.
+
+    For stationary models (emd.T == 1), iterates the mean-field equation
+    m = f(theta, m) from the empirical spike mean to the fixed point m*,
+    then computes entropy flow at (theta, m*, m*).
 
     Parameters
     ----------
@@ -376,13 +375,31 @@ def calculate_entropy_flow(emd):
     sf_bath = np.zeros((emd.T, emd.N))
     sr_bath = np.zeros((emd.T, emd.N))
     mp = np.mean(emd.spikes, axis=(0, 1))
-    for t in range(emd.T):
-        m_p = mp if t == 0 else m
-        THETA_st = emd.theta_s[t]
-        m = computation_m(THETA_st, m_p)
-        sf_bath_t, sr_bath_t, s_bath_t = Dissipation_en(THETA_st, m, m_p)
-        sf_bath[t, :] = sf_bath_t
-        sr_bath[t, :] = sr_bath_t
-        s_bath[t, :] = s_bath_t
-        M[t] = m
+
+    if emd.T == 1:
+        # Stationary case: iterate mean-field to fixed point m*
+        theta = emd.theta_s[0]
+        m = mp.copy()
+        for _ in range(1000):
+            m_prev = m.copy()
+            m = compute_mean_field(theta, m)
+            if np.max(np.abs(m - m_prev)) < 1e-8:
+                break
+        # At stationarity, m_p = m = m*
+        sf, sr, s_net = compute_dissipation(theta, m, m)
+        sf_bath[0, :] = sf
+        sr_bath[0, :] = sr
+        s_bath[0, :] = s_net
+        M[0] = m
+    else:
+        for t in range(emd.T):
+            m_p = mp if t == 0 else m
+            THETA_st = emd.theta_s[t]
+            m = compute_mean_field(THETA_st, m_p)
+            sf_bath_t, sr_bath_t, s_bath_t = compute_dissipation(THETA_st, m, m_p)
+            sf_bath[t, :] = sf_bath_t
+            sr_bath[t, :] = sr_bath_t
+            s_bath[t, :] = s_bath_t
+            M[t] = m
+
     return sf_bath, sr_bath, s_bath, M

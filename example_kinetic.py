@@ -48,10 +48,10 @@ import synthesis
 # Set random seed for reproducibility
 np.random.seed(42)
 # Create underlying time-varying theta parameters as Gaussian processes
-THETA = synthesis.get_THETA_gaussian_process(T, N, mu=-2.0, sigma=50.0, alpha=12.0)
+THETA = synthesis.generate_thetas(T, N, mu=-2.0, sigma=50.0, alpha=12.0)
 # Generate spike data from the kinetic Ising model
 np.random.seed(1)
-spikes = synthesis.get_S_function(T, R, N, THETA)
+spikes = synthesis.generate_spikes(T, R, N, THETA)
 
 
 # ----- ALGORITHM EXECUTION -----
@@ -71,10 +71,10 @@ emd = __init__.run(spikes, max_iter=100, state_cov=0.5)
 
 # ----- ENTROPY FLOW -----
 # Local module
-import macro
+import entropy_flow
 
 # Compute entropy flow from estimated parameters
-sf_bath, sr_bath, s_bath, M = macro.calculate_entropy_flow(emd)
+sf_bath, sr_bath, s_bath, M = entropy_flow.compute_entropy_flow(emd)
 # s_bath: net entropy flow (dissipative), shape (T, N)
 # sf_bath: forward conditional entropy, shape (T, N)
 # sr_bath: reverse conditional entropy, shape (T, N)

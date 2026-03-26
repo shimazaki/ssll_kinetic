@@ -46,9 +46,9 @@ class EMData:
               A value of 1 indicates a spike and 0 indicates no spike.
         :param state_cov:
             Controls the Q (state covariance) estimation method:
-              - scalar (int/float): Q[i] = state_cov * I(N+1), updated via get_scalar_q
+              - scalar (int/float): Q[i] = state_cov * I(N+1), updated via get_scalar_Q
               - vector shape (N+1,): Q[i] = diag(state_cov), updated via get_diagonal_Q
-              - matrix shape (N+1, N+1): Q[i] = state_cov, updated via get_Q
+              - matrix shape (N+1, N+1): Q[i] = state_cov, updated via get_full_Q
               - 0 or None: Q[i] = zeros, no Q update (fixed)
             Default is 0.5.
 

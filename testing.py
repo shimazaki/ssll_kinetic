@@ -479,5 +479,52 @@ class TestEstimator(unittest.TestCase):
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 
+    def test_13_stationary_entropy_flow(self):
+        """Test stationary entropy flow: fixed-point convergence and positivity."""
+        print("Test Stationary Entropy Flow.")
+        start_cpu_time = time.process_time()
+
+        T, R, N = 50, 20, 2
+        np.random.seed(DEFAULT_THETA_SEED)
+        THETA = synthesis.generate_thetas(T, N, mu=0.5, sigma=10.0)
+        np.random.seed(DEFAULT_SPIKE_SEED)
+        spikes = synthesis.generate_spikes(T, R, N, THETA)
+
+        emd = __init__.run(spikes, max_iter=50, stationary=True)
+        sf, sr, s_net, M = entropy_flow.compute_entropy_flow(emd)
+
+        # Shapes should be (1, N) from unified interface
+        self.assertEqual(sf.shape, (1, N))
+        self.assertEqual(sr.shape, (1, N))
+        self.assertEqual(s_net.shape, (1, N))
+        self.assertEqual(M.shape, (1, N))
+
+        m_star = M[0]
+
+        # m_star should be a fixed point: m* = f(theta, m*)
+        theta = emd.theta_s[0]
+        m_check = entropy_flow.compute_mean_field(theta, m_star)
+        self.assertLess(np.max(np.abs(m_star - m_check)), 1e-7,
+            "m_star should be a fixed point of the mean-field equation")
+
+        # Probabilities in (0, 1)
+        self.assertTrue(np.all(m_star > 0) and np.all(m_star < 1))
+
+        # Forward and reverse entropies should be positive
+        self.assertTrue(np.all(sf > 0), "Forward entropy should be positive")
+        self.assertTrue(np.all(sr > 0), "Reverse entropy should be positive")
+
+        # Net entropy flow (dissipation) should be non-negative at stationarity
+        self.assertTrue(np.all(s_net >= -1e-10),
+            "Net entropy flow should be non-negative at stationarity")
+
+        end_cpu_time = time.process_time()
+        print('Fixed point m*:', m_star)
+        print('Forward entropy:', sf[0])
+        print('Reverse entropy:', sr[0])
+        print('Net entropy flow:', s_net[0])
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
 if __name__ == "__main__":
     unittest.main()
