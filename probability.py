@@ -26,6 +26,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import numpy as np
 
+try:
+    import jax
+    import jax.numpy as jnp
+    jax.config.update("jax_enable_x64", True)
+
+    @jax.jit
+    def _compute_psi_jax(spikes_t, theta_f):
+        bias = theta_f[:, 0]
+        weights = theta_f[:, 1:]
+        logit = bias + spikes_t @ weights.T       # (R, N)
+        return jnp.sum(jnp.logaddexp(0, logit), axis=0)  # (N,)
+
+    _HAS_JAX = True
+except ImportError:
+    _HAS_JAX = False
+
 def log_marginal(emd):
     """
     Computes the log marginal likelihood of the data given the current state estimates.
@@ -49,28 +65,28 @@ def log_marginal(emd):
     _, logdet_sigma_f = np.linalg.slogdet(emd.sigma_f)
     _, logdet_sigma_o = np.linalg.slogdet(emd.sigma_o)
 
-    # 2) Quadratic penalty term based on a = theta_f - theta_o
+    # 2) Quadratic penalty term: b[t,i] = 0.5 * a[t,i] @ sigma_o_i[t,i] @ a[t,i]
     a = emd.theta_f - emd.theta_o
-    b = 0.5 * np.einsum(
-        'tij,tij->ti',
-        a,
-        np.einsum('tijk,tij->tik', emd.sigma_o_i, a)
-    )
+    Sa = np.matmul(emd.sigma_o_i, a[..., np.newaxis]).squeeze(-1)  # (T,N,N+1)
+    b = 0.5 * np.sum(a * Sa, axis=-1)                              # (T,N)
 
-    # 3) Construct feature matrix F_1 = [1, spike data]
-    F_1 = np.concatenate(
-        [np.ones((emd.T, emd.R, 1)), emd.spikes[:emd.T]],
-        axis=2
-    )
-
-    # 4) Compute PSI = sum over trials of log(1 + exp(theta_f . F_1))
-    PSI = np.sum(
-        np.logaddexp(0, np.einsum('tij,trj->tri', emd.theta_f, F_1)),
-        axis=1
-    )
+    # 3-4) PSI = sum_r logaddexp(0, theta_f @ F1_r) — avoid allocating (T,R,N+1) F_1
+    if _HAS_JAX:
+        PSI = np.empty((emd.T, emd.N))
+        for t in range(emd.T):
+            PSI[t] = np.asarray(_compute_psi_jax(
+                jnp.asarray(emd.spikes[t]),
+                jnp.asarray(emd.theta_f[t])
+            ))
+    else:
+        #   theta_f @ F1.T = theta_f[:,n,0] (bias) + spikes[:T] @ theta_f[:,n,1:].T (couplings)
+        bias = emd.theta_f[:, :, 0][:, np.newaxis, :]           # (T, 1, N)
+        weights = emd.theta_f[:, :, 1:]                          # (T, N, N)
+        logit = bias + np.matmul(emd.spikes[:emd.T], weights.swapaxes(-2, -1))  # (T, R, N)
+        PSI = np.sum(np.logaddexp(0, logit), axis=1)             # (T, N)
 
     # 5) Compute q = <theta_f, FSUM> - PSI - b
-    q = np.einsum('tij,tij->ti', emd.theta_f, emd.FSUM) - PSI - b
+    q = np.sum(emd.theta_f * emd.FSUM, axis=-1) - PSI - b
 
     # 6) Combine determinant and q terms for final log marginal likelihood
     log_p = np.sum(0.5 * logdet_sigma_f - 0.5 * logdet_sigma_o + q)

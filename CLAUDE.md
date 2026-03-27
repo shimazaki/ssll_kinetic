@@ -18,7 +18,7 @@ Uses `unittest` (no pytest config).
 
 ## Dependencies
 
-numpy, matplotlib, IPython, joblib, numba. Use the `ssll` conda environment.
+numpy, matplotlib, IPython, joblib, numba. Optional: jax[cuda12] for GPU acceleration (requires Python >=3.11 and CUDA 12; use `py311` conda environment on otto/diesel). Falls back to numpy automatically when JAX is unavailable.
 
 ## Architecture
 
@@ -39,7 +39,7 @@ Single-level Python package (`ssll_kinetic/`) with no subpackages:
   - `compute_dissipation(a, m, m_p)` — per-time-step forward/reverse/net entropy flow per neuron
   - `compute_mean_field(a, m_p)` — mean-field spike probability update
   - Two equivalent formulations: chi-based (`update_S`, `update_S_re`) and h-psi decomposition (`update_S_alt`, `update_S_re_alt`); see Eqs. 47-48, 57-58 in the paper
-- **`testing.py`** — 13 unit tests covering EM, entropy flow, parameter recovery, formulation equivalence, and stationary analysis
+- **`testing.py`** — 15 unit tests covering EM, entropy flow, parameter recovery, formulation equivalence, stationary analysis, and JAX/numpy parity
 
 ## Data Dimensions
 

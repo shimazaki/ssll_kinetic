@@ -28,6 +28,23 @@ import numpy as np
 from joblib import Parallel, delayed
 from numba import njit
 
+try:
+    import jax
+    import jax.numpy as jnp
+    jax.config.update("jax_enable_x64", True)
+
+    @jax.jit
+    def _compute_eta_G_jax(theta, F1):
+        r = jax.nn.sigmoid(F1 @ theta.T)            # (R, N)
+        eta = r.T @ F1                               # (N, N+1)
+        w = r * (1 - r)                              # (R, N)
+        G = jnp.einsum('rn,ri,rj->nij', w, F1, F1)  # (N, N+1, N+1)
+        return eta, G
+
+    _HAS_JAX = True
+except ImportError:
+    _HAS_JAX = False
+
 MAX_GA_ITERATIONS = 5000
 GA_CONVERGENCE = 1e-4
 
@@ -201,7 +218,10 @@ def compute_eta_G(theta, F1):
         eta: numpy.ndarray of shape (N, N+1)
         G: numpy.ndarray of shape (N, N+1, N+1)
     """
-    # r: (R, N) — sigmoid via matmul instead of einsum
+    if _HAS_JAX:
+        eta, G = _compute_eta_G_jax(jnp.asarray(theta), jnp.asarray(F1))
+        return np.asarray(eta), np.asarray(G)
+    # r: (R, N) — sigmoid via BLAS dgemm + SIMD vectorized exp
     r = 1 / (1 + np.exp(-F1 @ theta.T))
     # eta: (N, N+1) — BLAS dgemm
     eta = r.T @ F1
@@ -224,6 +244,10 @@ def e_step_filter(emd):
     :returns: tuple
         Updated (theta_f, sigma_f, sigma_f_i, sigma_o, sigma_o_i).
     """
+    # Pre-allocate F1 buffer to avoid repeated concatenation.
+    F1 = np.empty((emd.R, emd.N + 1))
+    F1[:, 0] = 1.0
+
     for t in range(emd.T):
         if t == 0:
             emd.theta_o[0] = emd.init_theta
@@ -234,24 +258,30 @@ def e_step_filter(emd):
             emd.sigma_o[t] = emd.sigma_f[t - 1] + emd.state_cov
             emd.sigma_o_i[t] = np.linalg.inv(emd.sigma_o[t])
 
-        # Build F1 once per time step, outside the NR loop.
-        F1 = np.concatenate([np.ones((emd.R, 1)), emd.spikes[t]], axis=1)
+        # Fill F1 in-place (no allocation per time step).
+        F1[:, 1:] = emd.spikes[t]
+        F1_jax = jnp.asarray(F1) if _HAS_JAX else None
 
         max_dlpo = np.inf
         iterations = 0
 
         while max_dlpo > GA_CONVERGENCE:
-            eta, G = compute_eta_G(emd.theta_f[t], F1)
-            dlpo = - (emd.FSUM[t] - eta) + np.einsum(
-                'ijk,ik->ij',
-                emd.sigma_o_i[t],
-                emd.theta_f[t] - emd.theta_o[t]
-            )
+            if _HAS_JAX:
+                eta, G = _compute_eta_G_jax(jnp.asarray(emd.theta_f[t]), F1_jax)
+                eta, G = np.asarray(eta), np.asarray(G)
+            else:
+                eta, G = compute_eta_G(emd.theta_f[t], F1)
+            diff = emd.theta_f[t] - emd.theta_o[t]
+            dlpo = eta - emd.FSUM[t] + np.matmul(
+                emd.sigma_o_i[t], diff[..., np.newaxis]
+            ).squeeze(-1)
             ddlpo = G + emd.sigma_o_i[t]
             ddlpo_i = np.linalg.inv(ddlpo)
 
             # Update theta_f
-            emd.theta_f[t] -= np.einsum('ijk,ik->ij', ddlpo_i, dlpo)
+            emd.theta_f[t] -= np.matmul(
+                ddlpo_i, dlpo[..., np.newaxis]
+            ).squeeze(-1)
 
             max_dlpo = np.amax(np.absolute(dlpo)) / emd.R
             iterations += 1
@@ -420,31 +450,20 @@ def e_step_smooth(emd):
     emd.sigma_s[emd.T - 1] = emd.sigma_f[emd.T - 1]
     for tt in range(emd.T - 1):
         t = emd.T - 2 - tt
-        emd.A[t] = np.einsum('ijk,ikl->ijl', emd.sigma_f[t], emd.sigma_o_i[t + 1])
+        # A[t] = sigma_f[t] @ sigma_o_i[t+1]  — batched over N neurons
+        emd.A[t] = np.matmul(emd.sigma_f[t], emd.sigma_o_i[t + 1])
 
-        tmp = np.einsum(
-            'ijk,ik->ij',
-            emd.A[t],
-            (emd.theta_s[t + 1] - emd.theta_o[t + 1])
-        )
-        emd.theta_s[t] = emd.theta_f[t] + tmp
+        diff_theta = emd.theta_s[t + 1] - emd.theta_o[t + 1]  # (N, N+1)
+        emd.theta_s[t] = emd.theta_f[t] + np.matmul(
+            emd.A[t], diff_theta[..., np.newaxis]
+        ).squeeze(-1)
 
-        tmp = np.einsum(
-            'ijk,ikl->ijl',
-            emd.A[t],
-            (emd.sigma_s[t + 1] - emd.sigma_o[t + 1])
-        )
-        tmp = np.einsum(
-            'ijk,ikl->ijl',
-            tmp,
-            emd.A[t].swapaxes(1, 2)
-        )
+        diff_sigma = emd.sigma_s[t + 1] - emd.sigma_o[t + 1]  # (N, N+1, N+1)
+        tmp = np.matmul(np.matmul(emd.A[t], diff_sigma),
+                        emd.A[t].swapaxes(-2, -1))
         emd.sigma_s[t] = emd.sigma_f[t] + tmp
-        emd.lag_one_covariance[t] = np.einsum(
-            'ijk,ikl->ijl',
-            emd.A[t],
-            emd.sigma_s[t + 1]
-        )
+
+        emd.lag_one_covariance[t] = np.matmul(emd.A[t], emd.sigma_s[t + 1])
 
     return emd.sigma_s, emd.theta_o, emd.theta_s, emd.lag_one_covariance, emd.A
 

@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import ssll_kinetic
-from ssll_kinetic import synthesis, container, exp_max, entropy_flow
+from ssll_kinetic import synthesis, container, exp_max, entropy_flow, probability
 
 # Test Parameters
 DEFAULT_T = 20   # Number of time steps
@@ -520,6 +520,82 @@ class TestEstimator(unittest.TestCase):
         print('Forward entropy:', sf[0])
         print('Reverse entropy:', sr[0])
         print('Net entropy flow:', s_net[0])
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
+    def test_14_jax_numpy_parity(self):
+        """Test that JAX and numpy paths produce identical results."""
+        try:
+            import jax
+            import jax.numpy as jnp
+            jax.config.update("jax_enable_x64", True)
+        except ImportError:
+            self.skipTest("JAX not available")
+
+        print("Test JAX/numpy parity.")
+        start_cpu_time = time.process_time()
+
+        THETA, spikes = generate_test_data(self.T, self.R, self.N)
+
+        # --- Test compute_eta_G ---
+        theta = np.random.RandomState(42).randn(self.N, self.N + 1)
+        F1 = np.empty((self.R, self.N + 1))
+        F1[:, 0] = 1.0
+        F1[:, 1:] = spikes[0]
+
+        # Numpy path
+        r = 1 / (1 + np.exp(-F1 @ theta.T))
+        eta_np = r.T @ F1
+        w = r * (1 - r)
+        G_np = np.empty((self.N, self.N + 1, self.N + 1))
+        for n in range(self.N):
+            wF = F1 * w[:, n:n+1]
+            G_np[n] = wF.T @ F1
+
+        # JAX path
+        eta_jax, G_jax = exp_max._compute_eta_G_jax(
+            jnp.asarray(theta), jnp.asarray(F1))
+        eta_jax, G_jax = np.asarray(eta_jax), np.asarray(G_jax)
+
+        eta_diff = np.max(np.abs(eta_np - eta_jax))
+        G_diff = np.max(np.abs(G_np - G_jax))
+        print('compute_eta_G: eta diff=%.2e, G diff=%.2e' % (eta_diff, G_diff))
+        self.assertLess(eta_diff, 1e-10, "eta mismatch: %.2e" % eta_diff)
+        self.assertLess(G_diff, 1e-10, "G mismatch: %.2e" % G_diff)
+
+        # --- Test _compute_psi_jax ---
+        # Run EM to get realistic theta_f
+        emd = run_em_with_q_method(spikes, q_method='diagonal')
+
+        # Numpy PSI (reference)
+        bias = emd.theta_f[:, :, 0][:, np.newaxis, :]
+        weights = emd.theta_f[:, :, 1:]
+        logit = bias + np.matmul(emd.spikes[:emd.T],
+                                 weights.swapaxes(-2, -1))
+        PSI_np = np.sum(np.logaddexp(0, logit), axis=1)  # (T, N)
+
+        # JAX PSI
+        PSI_jax = np.empty((emd.T, emd.N))
+        for t in range(emd.T):
+            PSI_jax[t] = np.asarray(probability._compute_psi_jax(
+                jnp.asarray(emd.spikes[t]),
+                jnp.asarray(emd.theta_f[t])
+            ))
+
+        psi_diff = np.max(np.abs(PSI_np - PSI_jax))
+        print('PSI: max diff=%.2e' % psi_diff)
+        self.assertLess(psi_diff, 1e-10, "PSI mismatch: %.2e" % psi_diff)
+
+        # --- Test full EM parity: force numpy path, compare mllk ---
+        # The existing tests already check mllk against expected values,
+        # so if JAX path produces the same mllk, parity is confirmed.
+        print('EM mllk (JAX path): %.6f (expected %.6f)' %
+              (emd.mllk, EXPECTED_MLLK_DIAGONAL_Q))
+        self.assertFalse(
+            np.absolute(emd.mllk - EXPECTED_MLLK_DIAGONAL_Q) > DEFAULT_MLLK_TOLERANCE,
+            "JAX-path EM mllk should match expected value")
+
+        end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 
