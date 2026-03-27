@@ -65,11 +65,7 @@ def log_marginal(emd):
 
     # 4) Compute PSI = sum over trials of log(1 + exp(theta_f . F_1))
     PSI = np.sum(
-        np.log(
-            1 + np.exp(
-                np.einsum('tij,trj->tri', emd.theta_f, F_1)
-            )
-        ),
+        np.logaddexp(0, np.einsum('tij,trj->tri', emd.theta_f, F_1)),
         axis=1
     )
 

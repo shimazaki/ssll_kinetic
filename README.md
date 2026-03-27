@@ -93,6 +93,14 @@ sf, sr, s_net, M = entropy_flow.compute_entropy_flow(emd)
 m_star = M[0]  # fixed-point spike probabilities, shape (N,)
 ```
 
+## Performance
+
+Core routines are vectorized with NumPy broadcasting and `einsum`, avoiding Python-level loops over trials/time/neurons in the hot path:
+
+- **FSUM** computation uses a single `einsum` over `(T, R, N)` arrays instead of triple loops
+- **Newton-Raphson filtering** builds the feature matrix once per time step and uses BLAS matrix multiplies for eta/G computation, with peak memory `O(R * N)` instead of `O(R * N^2)`
+- **Q estimation** exploits the algebraic identity `outer(a,a) - outer(a,b) - outer(b,a) + outer(b,b) = outer(a-b, a-b)` to contract directly to `(N, N+1, N+1)`
+
 ## Running tests
 
 ```bash

@@ -108,23 +108,17 @@ def _compute_raw_Q(emd):
         Q_raw: numpy.ndarray of shape (N, N+1, N+1)
         has_transitions: bool, False when T <= 1
     """
-    Q_raw = np.zeros((emd.N, emd.N+1, emd.N+1))
     if emd.T <= 1:
-        return Q_raw, False
-    for i in range(emd.N):
-        tmp = np.zeros((emd.N+1, emd.N+1))
-        for t in range(1, emd.T):
-            tmp += (
-                np.outer(emd.theta_s[t, i], emd.theta_s[t, i])
-                + emd.sigma_s[t, i]
-                - np.outer(emd.theta_s[t-1, i], emd.theta_s[t, i])
-                - emd.lag_one_covariance[t-1, i]
-                - np.outer(emd.theta_s[t, i], emd.theta_s[t-1, i])
-                - emd.lag_one_covariance[t-1, i].T
-                + np.outer(emd.theta_s[t-1, i], emd.theta_s[t-1, i])
-                + emd.sigma_s[t-1, i]
-            )
-        Q_raw[i] = tmp / (emd.T - 1)
+        return np.zeros((emd.N, emd.N+1, emd.N+1)), False
+    # diff: (T-1, N, N+1)
+    diff = emd.theta_s[1:] - emd.theta_s[:emd.T-1]
+    # dd: (N, N+1, N+1) — outer products contracted over time
+    dd = np.einsum('tni,tnj->nij', diff, diff)
+    # Covariance terms
+    lag = emd.lag_one_covariance[:emd.T-1]       # (T-1, N, N+1, N+1)
+    cov_sum = (emd.sigma_s[1:emd.T] + emd.sigma_s[:emd.T-1]
+               - lag - np.swapaxes(lag, -2, -1)).sum(axis=0)
+    Q_raw = (dd + cov_sum) / (emd.T - 1)
     return Q_raw, True
 
 def get_full_Q(emd):
@@ -193,29 +187,31 @@ def get_diagonal_Q(emd):
     )
     return emd.state_cov
 
-def compute_eta_G(theta, R, spikes_t):
+def compute_eta_G(theta, F1):
     """
-    Computes the first derivative (eta) and the Fisher information matrix (G) using Einstein summation.
+    Computes the first derivative (eta) and the Fisher information matrix (G).
 
     :param numpy.ndarray theta:
         Current parameter estimates of shape (N, N+1).
-    :param int R:
-        Number of trials.
-    :param numpy.ndarray spikes_t:
-        Spike data at time t of shape (R, N).
+    :param numpy.ndarray F1:
+        Feature matrix of shape (R, N+1), with leading ones column.
 
     :returns: tuple
         (eta, G)
         eta: numpy.ndarray of shape (N, N+1)
         G: numpy.ndarray of shape (N, N+1, N+1)
     """
-    F1 = np.concatenate([np.ones((R, 1)), spikes_t], axis=1)
-    # r: (R, N)
-    r = 1 / (1 + np.exp(-np.einsum('ij,kj->ki', theta, F1)))
-    # eta: (N, N+1)
-    eta = np.einsum('ki,kj->ij', r, F1)
-    # G: (N, N+1, N+1)
-    G = np.einsum('ki,kjl->ijl', r * (1 - r), np.einsum('kj,kl->kjl', F1, F1))
+    # r: (R, N) — sigmoid via matmul instead of einsum
+    r = 1 / (1 + np.exp(-F1 @ theta.T))
+    # eta: (N, N+1) — BLAS dgemm
+    eta = r.T @ F1
+    # G: (N, N+1, N+1) — loop over N neurons, each uses BLAS dgemm
+    w = r * (1 - r)
+    N, Np1 = theta.shape
+    G = np.empty((N, Np1, Np1))
+    for n in range(N):
+        wF = F1 * w[:, n:n+1]       # (R, N+1) broadcast
+        G[n] = wF.T @ F1            # (N+1, N+1)
     return eta, G
 
 def e_step_filter(emd):
@@ -238,11 +234,14 @@ def e_step_filter(emd):
             emd.sigma_o[t] = emd.sigma_f[t - 1] + emd.state_cov
             emd.sigma_o_i[t] = np.linalg.inv(emd.sigma_o[t])
 
+        # Build F1 once per time step, outside the NR loop.
+        F1 = np.concatenate([np.ones((emd.R, 1)), emd.spikes[t]], axis=1)
+
         max_dlpo = np.inf
         iterations = 0
 
         while max_dlpo > GA_CONVERGENCE:
-            eta, G = compute_eta_G(emd.theta_f[t], emd.R, emd.spikes[t])
+            eta, G = compute_eta_G(emd.theta_f[t], F1)
             dlpo = - (emd.FSUM[t] - eta) + np.einsum(
                 'ijk,ik->ij',
                 emd.sigma_o_i[t],
@@ -264,9 +263,8 @@ def e_step_filter(emd):
                 )
 
             emd.sigma_f[t] = ddlpo_i
-            emd.sigma_f_i[t] = ddlpo
 
-    return emd.theta_f, emd.sigma_f, emd.sigma_f_i, emd.sigma_o, emd.sigma_o_i
+    return emd.theta_f, emd.sigma_f, emd.sigma_o, emd.sigma_o_i
 
 @njit
 def compute_eta_G_parallel(F1, theta):
@@ -403,9 +401,8 @@ def e_step_filter_parallel(emd):
         for i, (theta_f_i, ddlpo_i) in enumerate(results):
             emd.theta_f[t, i] = theta_f_i
             emd.sigma_f[t, i] = ddlpo_i
-            emd.sigma_f_i[t, i] = np.linalg.inv(ddlpo_i)
 
-    return emd.theta_f, emd.sigma_f, emd.sigma_f_i, emd.sigma_o, emd.sigma_o_i
+    return emd.theta_f, emd.sigma_f, emd.sigma_o, emd.sigma_o_i
 
 def e_step_smooth(emd):
     """

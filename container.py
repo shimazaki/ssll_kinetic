@@ -116,31 +116,25 @@ class EMData:
         self.state_cov_0 = state_cov
 
         # Initialize state covariance matrices based on state_cov type.
+        eye = np.eye(self.N + 1)
         self.state_cov = np.zeros((self.N, self.N+1, self.N+1))
         if state_cov is None or (np.isscalar(state_cov) and state_cov == 0):
             pass  # Q[i] = zeros (no dynamics)
         elif np.isscalar(state_cov):
-            for i in range(self.N):
-                self.state_cov[i] = state_cov * np.identity(self.N+1)
+            self.state_cov[:] = state_cov * eye
         else:
             state_cov = np.asarray(state_cov)
             if state_cov.ndim == 1:
-                for i in range(self.N):
-                    self.state_cov[i] = np.diag(state_cov)
+                self.state_cov[:] = np.diag(state_cov)
             elif state_cov.ndim == 2:
-                for i in range(self.N):
-                    self.state_cov[i] = state_cov
+                self.state_cov[:] = state_cov
 
         # Initialize F matrices as identity for each neuron.
-        self.F = np.zeros((self.N, self.N+1, self.N+1))
-        for i in range(self.N):
-            self.F[i] = np.identity(self.N+1)
+        self.F = np.tile(eye, (self.N, 1, 1))
 
         # Initialize initial covariance matrices as identity.
-        self.init_cov = np.zeros((self.N, self.N+1, self.N+1))
-        for i in range(self.N):
-            self.init_cov[i] = np.identity(self.N+1)
-        self.init_cov_i = np.linalg.inv(self.init_cov)
+        self.init_cov = np.tile(eye, (self.N, 1, 1))
+        self.init_cov_i = np.tile(eye, (self.N, 1, 1))
 
         # Initialize initial theta parameters as zeros.
         self.init_theta = np.zeros((self.N, self.N+1))
@@ -153,13 +147,11 @@ class EMData:
         self.llk_time = 0
 
         # Pre-compute FSUM: an array that sums spike activity and their products across trials.
-        self.FSUM = np.zeros((self.T, self.N, self.N+1))
-        for l in range(self.R):
-            for t in range(1, self.T+1):
-                for n in range(self.N):
-                    # Append spike value and product with previous time step's spike.
-                    self.FSUM[t-1, n] += np.append(self.spikes[t, l, n],
-                                                     self.spikes[t, l, n] * self.spikes[t-1, l])
+        current = self.spikes[1:]          # (T, R, N)
+        prev = self.spikes[:self.T]        # (T, R, N)
+        self.FSUM = np.zeros((self.T, self.N, self.N + 1))
+        self.FSUM[:, :, 0] = current.sum(axis=1)
+        self.FSUM[:, :, 1:] = np.einsum('trn,trm->tnm', current, prev)
         # Initialize theta estimates.
         self.theta_o = np.zeros((self.T, self.N, self.N+1))
         self.theta_f = np.zeros((self.T, self.N, self.N+1))
@@ -167,14 +159,9 @@ class EMData:
         self.eta_s = np.zeros((self.T, self.N, self.N+1))  # Smoothed expectations.
 
         # Initialize covariance estimates.
-        self.sigma_o = np.zeros((self.T, self.N, self.N+1, self.N+1))
-        self.sigma_f = np.zeros((self.T, self.N, self.N+1, self.N+1))
-        for t in range(self.T):
-            for i in range(self.N):
-                self.sigma_f[t, i] = np.identity(self.N+1)
-                self.sigma_o[t, i] = np.identity(self.N+1)
-        self.sigma_f_i = np.linalg.inv(self.sigma_f)
-        self.sigma_o_i = np.linalg.inv(self.sigma_o)
+        self.sigma_f = np.tile(eye, (self.T, self.N, 1, 1))
+        self.sigma_o = np.tile(eye, (self.T, self.N, 1, 1))
+        self.sigma_o_i = np.tile(eye, (self.T, self.N, 1, 1))
         self.sigma_s = np.ones((self.T, self.N, self.N+1, self.N+1))
 
         # Initialize transition and lag-one covariance matrices.
