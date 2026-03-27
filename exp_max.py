@@ -41,6 +41,38 @@ try:
         G = jnp.einsum('rn,ri,rj->nij', w, F1, F1)  # (N, N+1, N+1)
         return eta, G
 
+    def _nr_loop_jax(theta_f, F1, FSUM, sigma_o_i, theta_o, R,
+                     ga_convergence, max_ga_iterations):
+        """Full Newton-Raphson loop on device via jax.lax.while_loop."""
+        N, Np1 = theta_f.shape
+
+        def _cond(state):
+            theta, sigma_f, max_dlpo, iterations = state
+            return (max_dlpo > ga_convergence) & (iterations < max_ga_iterations)
+
+        def _body(state):
+            theta, _, _, iterations = state
+            eta, G = _compute_eta_G_jax(theta, F1)
+            diff = theta - theta_o
+            dlpo = eta - FSUM + jnp.matmul(
+                sigma_o_i, diff[..., jnp.newaxis]
+            ).squeeze(-1)
+            ddlpo = G + sigma_o_i
+            ddlpo_i = jnp.linalg.inv(ddlpo)
+            theta = theta - jnp.matmul(
+                ddlpo_i, dlpo[..., jnp.newaxis]
+            ).squeeze(-1)
+            max_dlpo = jnp.amax(jnp.absolute(dlpo)) / R
+            return theta, ddlpo_i, max_dlpo, iterations + 1
+
+        init_sigma = jnp.zeros((N, Np1, Np1))
+        init_state = (theta_f, init_sigma, jnp.inf, 0)
+        theta_final, sigma_f, _, iterations = jax.lax.while_loop(
+            _cond, _body, init_state)
+        return theta_final, sigma_f, iterations
+
+    _nr_loop_jax = jax.jit(_nr_loop_jax, static_argnums=(5,))
+
     _HAS_JAX = True
 except ImportError:
     _HAS_JAX = False
@@ -260,39 +292,53 @@ def e_step_filter(emd):
 
         # Fill F1 in-place (no allocation per time step).
         F1[:, 1:] = emd.spikes[t]
-        F1_jax = jnp.asarray(F1) if _HAS_JAX else None
 
-        max_dlpo = np.inf
-        iterations = 0
-
-        while max_dlpo > GA_CONVERGENCE:
-            if _HAS_JAX:
-                eta, G = _compute_eta_G_jax(jnp.asarray(emd.theta_f[t]), F1_jax)
-                eta, G = np.asarray(eta), np.asarray(G)
-            else:
-                eta, G = compute_eta_G(emd.theta_f[t], F1)
-            diff = emd.theta_f[t] - emd.theta_o[t]
-            dlpo = eta - emd.FSUM[t] + np.matmul(
-                emd.sigma_o_i[t], diff[..., np.newaxis]
-            ).squeeze(-1)
-            ddlpo = G + emd.sigma_o_i[t]
-            ddlpo_i = np.linalg.inv(ddlpo)
-
-            # Update theta_f
-            emd.theta_f[t] -= np.matmul(
-                ddlpo_i, dlpo[..., np.newaxis]
-            ).squeeze(-1)
-
-            max_dlpo = np.amax(np.absolute(dlpo)) / emd.R
-            iterations += 1
-
-            if iterations == MAX_GA_ITERATIONS:
+        if _HAS_JAX:
+            theta_f_t, sigma_f_t, iterations = _nr_loop_jax(
+                jnp.asarray(emd.theta_f[t]),
+                jnp.asarray(F1),
+                jnp.asarray(emd.FSUM[t]),
+                jnp.asarray(emd.sigma_o_i[t]),
+                jnp.asarray(emd.theta_o[t]),
+                emd.R,
+                GA_CONVERGENCE,
+                MAX_GA_ITERATIONS,
+            )
+            emd.theta_f[t] = np.asarray(theta_f_t)
+            emd.sigma_f[t] = np.asarray(sigma_f_t)
+            if int(iterations) >= MAX_GA_ITERATIONS:
                 raise Exception(
                     "The gradient-ascent algorithm did not converge before "
                     "reaching the maximum number of iterations."
                 )
+        else:
+            max_dlpo = np.inf
+            iterations = 0
 
-            emd.sigma_f[t] = ddlpo_i
+            while max_dlpo > GA_CONVERGENCE:
+                eta, G = compute_eta_G(emd.theta_f[t], F1)
+                diff = emd.theta_f[t] - emd.theta_o[t]
+                dlpo = eta - emd.FSUM[t] + np.matmul(
+                    emd.sigma_o_i[t], diff[..., np.newaxis]
+                ).squeeze(-1)
+                ddlpo = G + emd.sigma_o_i[t]
+                ddlpo_i = np.linalg.inv(ddlpo)
+
+                # Update theta_f
+                emd.theta_f[t] -= np.matmul(
+                    ddlpo_i, dlpo[..., np.newaxis]
+                ).squeeze(-1)
+
+                max_dlpo = np.amax(np.absolute(dlpo)) / emd.R
+                iterations += 1
+
+                if iterations == MAX_GA_ITERATIONS:
+                    raise Exception(
+                        "The gradient-ascent algorithm did not converge before "
+                        "reaching the maximum number of iterations."
+                    )
+
+                emd.sigma_f[t] = ddlpo_i
 
     return emd.theta_f, emd.sigma_f, emd.sigma_o, emd.sigma_o_i
 

@@ -38,6 +38,11 @@ try:
         logit = bias + spikes_t @ weights.T       # (R, N)
         return jnp.sum(jnp.logaddexp(0, logit), axis=0)  # (N,)
 
+    @jax.jit
+    def _compute_psi_batch_jax(spikes, theta_f):
+        """Batched PSI over all T timesteps in a single kernel."""
+        return jax.vmap(_compute_psi_jax)(spikes, theta_f)  # (T, N)
+
     _HAS_JAX = True
 except ImportError:
     _HAS_JAX = False
@@ -72,12 +77,10 @@ def log_marginal(emd):
 
     # 3-4) PSI = sum_r logaddexp(0, theta_f @ F1_r) — avoid allocating (T,R,N+1) F_1
     if _HAS_JAX:
-        PSI = np.empty((emd.T, emd.N))
-        for t in range(emd.T):
-            PSI[t] = np.asarray(_compute_psi_jax(
-                jnp.asarray(emd.spikes[t]),
-                jnp.asarray(emd.theta_f[t])
-            ))
+        PSI = np.asarray(_compute_psi_batch_jax(
+            jnp.asarray(emd.spikes[:emd.T]),
+            jnp.asarray(emd.theta_f)
+        ))  # (T, N)
     else:
         #   theta_f @ F1.T = theta_f[:,n,0] (bias) + spikes[:T] @ theta_f[:,n,1:].T (couplings)
         bias = emd.theta_f[:, :, 0][:, np.newaxis, :]           # (T, 1, N)
