@@ -20,6 +20,8 @@ Uses `unittest` (no pytest config).
 
 numpy, matplotlib, IPython, joblib, numba. Optional: jax[cuda12] for GPU acceleration (requires Python >=3.11 and CUDA 12; use `py311` conda environment on otto/diesel). Falls back to numpy automatically when JAX is unavailable.
 
+**GPU vs CPU guidance**: GPU (~15x) for stationary mode and non-stationary with N>=20. For non-stationary with N<=10, numpy (CPU) is faster — per-timestep matrices are too small for GPU overhead. N (neurons) is the dominant scaling factor for GPU benefit due to O((N+1)^3) NR solves.
+
 ## Architecture
 
 Single-level Python package (`ssll_kinetic/`) with no subpackages:

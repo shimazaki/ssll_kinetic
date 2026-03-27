@@ -74,8 +74,13 @@ try:
     _nr_loop_jax = jax.jit(_nr_loop_jax, static_argnums=(5,))
 
     def _e_step_filter_jax_fn(spikes_T, FSUM, init_theta, init_cov, state_cov,
-                               R, ga_convergence, max_ga_iterations):
-        """Full forward filter via jax.lax.scan — zero host round-trips."""
+                               theta_f_init, R, ga_convergence,
+                               max_ga_iterations):
+        """Full forward filter via jax.lax.scan — zero host round-trips.
+
+        theta_f_init: (T, N, N+1) NR starting points (previous EM iteration's
+                      theta_f, or zeros on first iteration).
+        """
         N = init_theta.shape[0]
         Np1 = init_theta.shape[1]
 
@@ -88,7 +93,7 @@ try:
 
         def scan_body(carry, xs):
             theta_f_prev, sigma_f_prev = carry
-            F1_t, FSUM_t = xs
+            F1_t, FSUM_t, theta_f_start = xs
 
             theta_o = theta_f_prev
             sigma_o = sigma_f_prev + state_cov
@@ -117,18 +122,19 @@ try:
                 return theta, ddlpo_i, max_dlpo, iterations + 1
 
             init_sigma = jnp.zeros((N, Np1, Np1))
-            init_state = (theta_o, init_sigma, jnp.inf, 0)
+            init_state = (theta_f_start, init_sigma, jnp.inf, 0)
             theta_f, sigma_f, _, iters = jax.lax.while_loop(
                 _cond, _body, init_state)
 
             return (theta_f, sigma_f), (theta_f, sigma_f, theta_o, sigma_o,
                                         sigma_o_i, iters)
 
-        _, outputs = jax.lax.scan(scan_body, init_carry, (F1_all, FSUM))
+        _, outputs = jax.lax.scan(
+            scan_body, init_carry, (F1_all, FSUM, theta_f_init))
         return outputs
 
     _e_step_filter_jax = jax.jit(
-        _e_step_filter_jax_fn, static_argnums=(5, 6, 7))
+        _e_step_filter_jax_fn, static_argnums=(6, 7, 8))
 
     @jax.jit
     def _e_step_smooth_jax(theta_f, sigma_f, theta_o, sigma_o, sigma_o_i):
@@ -384,6 +390,7 @@ def e_step_filter(emd):
             jnp.asarray(emd.init_theta),
             jnp.asarray(emd.init_cov),
             jnp.asarray(emd.state_cov),
+            jnp.asarray(emd.theta_f),
             emd.R,
             GA_CONVERGENCE,
             MAX_GA_ITERATIONS,
