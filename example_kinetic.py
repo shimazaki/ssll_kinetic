@@ -41,9 +41,13 @@ T, R, N = 500, 200, 2
 
 # ----- SPIKE SYNTHESIS -----
 # Global module
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 # Local module
-import synthesis
+from ssll_kinetic import synthesis
 
 # Set random seed for reproducibility
 np.random.seed(42)
@@ -56,22 +60,22 @@ spikes = synthesis.generate_spikes(T, R, N, THETA)
 
 # ----- ALGORITHM EXECUTION -----
 # Local module
-import __init__  # From outside this folder, this would be 'import ssll_kinetic'
+import ssll_kinetic
 
 # Run the EM algorithm!
 # Scalar Q (isotropic): Q^i = q * I for each neuron
-emd = __init__.run(spikes, max_iter=100, state_cov=0.5)
+emd = ssll_kinetic.run(spikes, max_iter=100, state_cov=0.5)
 # Diagonal Q: Q^i = diag(v) for each neuron
-#emd = __init__.run(spikes, max_iter=100, state_cov=0.5*np.ones(N+1))
+#emd = ssll_kinetic.run(spikes, max_iter=100, state_cov=0.5*np.ones(N+1))
 # Full Q: Q^i updated as full matrix
-#emd = __init__.run(spikes, max_iter=100, state_cov=0.5*np.identity(N+1))
+#emd = ssll_kinetic.run(spikes, max_iter=100, state_cov=0.5*np.identity(N+1))
 # Without M-step (fixed state covariance):
-#emd = __init__.run(spikes, max_iter=100, mstep=False)
+#emd = ssll_kinetic.run(spikes, max_iter=100, mstep=False)
 
 
 # ----- ENTROPY FLOW -----
 # Local module
-import entropy_flow
+from ssll_kinetic import entropy_flow
 
 # Compute entropy flow from estimated parameters
 sf_bath, sr_bath, s_bath, M = entropy_flow.compute_entropy_flow(emd)
@@ -114,8 +118,8 @@ for i in range(N):
 ax[1].set_ylabel('Coupling parameters')
 
 # Entropy flow
-entropy_flow = np.sum(s_bath, axis=1)  # Sum over neurons
-ax[2].plot(entropy_flow, c='k', label='Entropy flow')
+total_entropy_flow = np.sum(s_bath, axis=1)  # Sum over neurons
+ax[2].plot(total_entropy_flow, c='k', label='Entropy flow')
 ax[2].set_xlabel('Time bins')
 ax[2].set_ylabel('Entropy flow')
 ax[2].legend(loc='upper right')

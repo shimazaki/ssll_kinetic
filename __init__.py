@@ -25,17 +25,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 __version__ = "0.1.0"
 
-import os
-import sys
 import numpy as np
 import time
 
-# Ensure local imports if needed
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-import container
-import exp_max
-from ssll_kinetic.probability import log_marginal
+from . import container
+from . import exp_max
+from .probability import log_marginal
 
 def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False):
     """
@@ -122,10 +117,10 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False):
 
     # Compute AIC after finishing
     if stationary:
-        emd.dim_pram = emd.N * (emd.N + 1)
-    emd.aic = -2 * emd.mllk + 2 * emd.dim_pram
+        emd.dim_param = emd.N * (emd.N + 1)
+    emd.aic = -2 * emd.mllk + 2 * emd.dim_param
     print("Log Likelihood:", emd.mllk, "iter:", emd.iterations)
-    print("emd.dim_pram:", emd.dim_pram)
+    print("emd.dim_param:", emd.dim_param)
     print("AIC:", emd.aic)
 
     return emd

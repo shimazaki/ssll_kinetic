@@ -25,7 +25,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import numpy as np
-from ssll_kinetic.probability import *
+from .probability import log_marginal
 
 class EMData:
     def __init__(self, spikes, state_cov=0.5):
@@ -57,7 +57,7 @@ class EMData:
             T (int): Number of time bins used in the model (spikes.shape[0] - 1).
             R (int): Number of trials (spikes.shape[1]).
             N (int): Number of neurons (spikes.shape[2]).
-            dim_pram (int): Dimension of the parameter vector (initialized to 0).
+            dim_param (int): Dimension of the parameter vector (initialized to 0).
             aic (float): Akaike Information Criterion (initialized to 0).
 
             state_cov (numpy.ndarray): An array of shape (N, N+1, N+1) containing the
@@ -109,7 +109,7 @@ class EMData:
         self.R = spikes.shape[1]
         self.N = spikes.shape[2]
 
-        self.dim_pram = 0
+        self.dim_param = 0
         self.aic = 0
 
         # Store original state_cov input for m_step dispatch.

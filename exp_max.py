@@ -101,16 +101,16 @@ def get_init_cov(emd):
         emd.init_cov[i] = emd.sigma_s[0, i] + np.outer(diff, diff)
     return emd.init_cov
 
-def get_full_Q(emd):
-    """
-    Computes a fully dense state covariance matrix Q for each neuron.
+def _compute_raw_Q(emd):
+    """Accumulate raw Q matrix for each neuron from smoothed estimates.
 
-    :param emd: container.EMData
-        The data structure with smoothed parameters (theta_s, sigma_s).
-    :returns: numpy.ndarray
-        The updated state_cov of shape (N, N+1, N+1).
+    :returns: tuple (Q_raw, has_transitions)
+        Q_raw: numpy.ndarray of shape (N, N+1, N+1)
+        has_transitions: bool, False when T <= 1
     """
-    Q = np.zeros((emd.N, emd.N+1, emd.N+1))
+    Q_raw = np.zeros((emd.N, emd.N+1, emd.N+1))
+    if emd.T <= 1:
+        return Q_raw, False
     for i in range(emd.N):
         tmp = np.zeros((emd.N+1, emd.N+1))
         for t in range(1, emd.T):
@@ -124,16 +124,24 @@ def get_full_Q(emd):
                 + np.outer(emd.theta_s[t-1, i], emd.theta_s[t-1, i])
                 + emd.sigma_s[t-1, i]
             )
-        if emd.T == 1:
-            # No transitions to estimate Q from
-            Q[i] = emd.state_cov[i]
-        else:
-            Q[i] = tmp / (emd.T - 1)
-            # Symmetrize
-            Q[i] = (Q[i] + Q[i].T) / 2
-    emd.state_cov = Q
-    # Update estimated dimension of parameters (example formula)
-    emd.dim_pram = (
+        Q_raw[i] = tmp / (emd.T - 1)
+    return Q_raw, True
+
+def get_full_Q(emd):
+    """
+    Computes a fully dense state covariance matrix Q for each neuron.
+
+    :param emd: container.EMData
+        The data structure with smoothed parameters (theta_s, sigma_s).
+    :returns: numpy.ndarray
+        The updated state_cov of shape (N, N+1, N+1).
+    """
+    Q_raw, has_transitions = _compute_raw_Q(emd)
+    if has_transitions:
+        for i in range(emd.N):
+            Q_raw[i] = (Q_raw[i] + Q_raw[i].T) / 2
+        emd.state_cov = Q_raw
+    emd.dim_param = (
         ((emd.N+1)*(emd.N+1 - 1)/2 + (emd.N+1)
          + (emd.N+1)*(emd.N+1 - 1)/2) * emd.N
     )
@@ -149,32 +157,15 @@ def get_scalar_Q(emd):
         The updated state_cov of shape (N, N+1, N+1),
         where each neuron's Q is a scalar times the identity matrix.
     """
-    Q = np.zeros((emd.N, emd.N+1, emd.N+1))
+    Q_raw, has_transitions = _compute_raw_Q(emd)
     for i in range(emd.N):
-        tmp = np.zeros((emd.N+1, emd.N+1))
-        for t in range(1, emd.T):
-            tmp += (
-                np.outer(emd.theta_s[t, i], emd.theta_s[t, i])
-                + emd.sigma_s[t, i]
-                - np.outer(emd.theta_s[t-1, i], emd.theta_s[t, i])
-                - emd.lag_one_covariance[t-1, i]
-                - np.outer(emd.theta_s[t, i], emd.theta_s[t-1, i])
-                - emd.lag_one_covariance[t-1, i].T
-                + np.outer(emd.theta_s[t-1, i], emd.theta_s[t-1, i])
-                + emd.sigma_s[t-1, i]
-            )
-        if emd.T == 1:
-            # No transitions to estimate Q from
-            pass
+        if has_transitions:
+            Q_sym = (Q_raw[i] + Q_raw[i].T) / 2
         else:
-            Q[i] = tmp / (emd.T - 1)
-            Q[i] = (Q[i] + Q[i].T) / 2
-
-        trace_Q = np.trace(Q[i])
-        qi = trace_Q / (emd.N + 1)
+            Q_sym = Q_raw[i]
+        qi = np.trace(Q_sym) / (emd.N + 1)
         emd.state_cov[i] = qi * np.eye(emd.N + 1)
-
-    emd.dim_pram = (
+    emd.dim_param = (
         (1 + (emd.N+1) + (emd.N+1)*(emd.N+1 - 1)/2) * emd.N
     )
     return emd.state_cov
@@ -189,29 +180,15 @@ def get_diagonal_Q(emd):
         The updated state_cov of shape (N, N+1, N+1),
         where each neuron's Q is diagonal.
     """
+    Q_raw, has_transitions = _compute_raw_Q(emd)
     Q = np.zeros((emd.N, emd.N+1, emd.N+1))
     for i in range(emd.N):
-        tmp = np.zeros((emd.N+1, emd.N+1))
-        for t in range(1, emd.T):
-            tmp += (
-                np.outer(emd.theta_s[t, i], emd.theta_s[t, i])
-                + emd.sigma_s[t, i]
-                - np.outer(emd.theta_s[t-1, i], emd.theta_s[t, i])
-                - emd.lag_one_covariance[t-1, i]
-                - np.outer(emd.theta_s[t, i], emd.theta_s[t-1, i])
-                - emd.lag_one_covariance[t-1, i].T
-                + np.outer(emd.theta_s[t-1, i], emd.theta_s[t-1, i])
-                + emd.sigma_s[t-1, i]
-            )
-        if emd.T == 1:
-            # No transitions to estimate Q from
-            Q[i] = emd.state_cov[i]
+        if has_transitions:
+            Q[i] = np.diag(np.diag(Q_raw[i]))
         else:
-            diag_values = np.diag(tmp) / (emd.T - 1)
-            Q[i] = np.diag(diag_values)
-
+            Q[i] = emd.state_cov[i]
     emd.state_cov = Q
-    emd.dim_pram = (
+    emd.dim_param = (
         ((emd.N+1) + (emd.N+1) + (emd.N+1)*(emd.N+1 - 1)/2) * emd.N
     )
     return emd.state_cov

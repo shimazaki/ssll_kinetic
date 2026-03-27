@@ -35,14 +35,11 @@ import time
 
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
-import synthesis
-import container
-import exp_max
-import entropy_flow
-import __init__
+import ssll_kinetic
+from ssll_kinetic import synthesis, container, exp_max, entropy_flow
 
 # Test Parameters
 DEFAULT_T = 20   # Number of time steps
@@ -111,7 +108,7 @@ def run_em_with_q_method(spikes, q_method='diagonal', max_iter=100):
         'full': 0.5 * np.identity(N + 1),
     }
     state_cov = state_cov_map[q_method]
-    return __init__.run(spikes, max_iter=max_iter, state_cov=state_cov)
+    return ssll_kinetic.run(spikes, max_iter=max_iter, state_cov=state_cov)
 
 
 class TestEstimator(unittest.TestCase):
@@ -208,7 +205,7 @@ class TestEstimator(unittest.TestCase):
         start_cpu_time = time.process_time()
 
         THETA, spikes = generate_test_data(self.T, self.R, self.N)
-        emd = __init__.run(spikes, max_iter=100, mstep=False)
+        emd = ssll_kinetic.run(spikes, max_iter=100, mstep=False)
 
         print('Log marginal likelihood = %.6f (expected %.6f)' %
               (emd.mllk, EXPECTED_MLLK_NO_MSTEP))
@@ -454,7 +451,7 @@ class TestEstimator(unittest.TestCase):
         np.random.seed(DEFAULT_SPIKE_SEED)
         spikes = synthesis.generate_spikes(T, R, N, THETA)
 
-        emd = __init__.run(spikes, max_iter=50, stationary=True)
+        emd = ssll_kinetic.run(spikes, max_iter=50, stationary=True)
 
         # Should have pooled T*R trials into a single time step
         self.assertEqual(emd.T, 1)
@@ -466,8 +463,8 @@ class TestEstimator(unittest.TestCase):
             "State covariance Q should remain zero for stationary model")
 
         # dim_pram and AIC should be set
-        self.assertEqual(emd.dim_pram, N * (N + 1))
-        expected_aic = -2 * emd.mllk + 2 * emd.dim_pram
+        self.assertEqual(emd.dim_param, N * (N + 1))
+        expected_aic = -2 * emd.mllk + 2 * emd.dim_param
         self.assertAlmostEqual(emd.aic, expected_aic, places=6)
 
         # Should converge
@@ -490,7 +487,7 @@ class TestEstimator(unittest.TestCase):
         np.random.seed(DEFAULT_SPIKE_SEED)
         spikes = synthesis.generate_spikes(T, R, N, THETA)
 
-        emd = __init__.run(spikes, max_iter=50, stationary=True)
+        emd = ssll_kinetic.run(spikes, max_iter=50, stationary=True)
         sf, sr, s_net, M = entropy_flow.compute_entropy_flow(emd)
 
         # Shapes should be (1, N) from unified interface
