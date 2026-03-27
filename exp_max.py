@@ -73,6 +73,107 @@ try:
 
     _nr_loop_jax = jax.jit(_nr_loop_jax, static_argnums=(5,))
 
+    def _e_step_filter_jax_fn(spikes_T, FSUM, init_theta, init_cov, state_cov,
+                               R, ga_convergence, max_ga_iterations):
+        """Full forward filter via jax.lax.scan — zero host round-trips."""
+        N = init_theta.shape[0]
+        Np1 = init_theta.shape[1]
+
+        ones_col = jnp.ones((spikes_T.shape[0], spikes_T.shape[1], 1))
+        F1_all = jnp.concatenate([ones_col, spikes_T], axis=2)  # (T, R, N+1)
+
+        # Init carry trick: sigma_f_prev = init_cov - state_cov so that
+        # sigma_o = carry_sigma + state_cov = init_cov at t=0.
+        init_carry = (init_theta, init_cov - state_cov)
+
+        def scan_body(carry, xs):
+            theta_f_prev, sigma_f_prev = carry
+            F1_t, FSUM_t = xs
+
+            theta_o = theta_f_prev
+            sigma_o = sigma_f_prev + state_cov
+            sigma_o_i = jnp.linalg.inv(sigma_o)
+
+            # Newton-Raphson via while_loop
+            def _cond(state):
+                _, _, max_dlpo, iterations = state
+                return (max_dlpo > ga_convergence) & (iterations < max_ga_iterations)
+
+            def _body(state):
+                theta, _, _, iterations = state
+                r = jax.nn.sigmoid(F1_t @ theta.T)
+                eta = r.T @ F1_t
+                w = r * (1 - r)
+                G = jnp.einsum('rn,ri,rj->nij', w, F1_t, F1_t)
+
+                diff = theta - theta_o
+                dlpo = eta - FSUM_t + jnp.matmul(
+                    sigma_o_i, diff[..., jnp.newaxis]).squeeze(-1)
+                ddlpo = G + sigma_o_i
+                ddlpo_i = jnp.linalg.inv(ddlpo)
+                theta = theta - jnp.matmul(
+                    ddlpo_i, dlpo[..., jnp.newaxis]).squeeze(-1)
+                max_dlpo = jnp.amax(jnp.absolute(dlpo)) / R
+                return theta, ddlpo_i, max_dlpo, iterations + 1
+
+            init_sigma = jnp.zeros((N, Np1, Np1))
+            init_state = (theta_o, init_sigma, jnp.inf, 0)
+            theta_f, sigma_f, _, iters = jax.lax.while_loop(
+                _cond, _body, init_state)
+
+            return (theta_f, sigma_f), (theta_f, sigma_f, theta_o, sigma_o,
+                                        sigma_o_i, iters)
+
+        _, outputs = jax.lax.scan(scan_body, init_carry, (F1_all, FSUM))
+        return outputs
+
+    _e_step_filter_jax = jax.jit(
+        _e_step_filter_jax_fn, static_argnums=(5, 6, 7))
+
+    @jax.jit
+    def _e_step_smooth_jax(theta_f, sigma_f, theta_o, sigma_o, sigma_o_i):
+        """Full backward smoother via jax.lax.scan(reverse=True)."""
+        T = theta_f.shape[0]
+
+        init_carry = (theta_f[T - 1], sigma_f[T - 1])
+
+        scan_inputs = (
+            sigma_f[:T - 1],
+            sigma_o_i[1:T],
+            theta_f[:T - 1],
+            theta_o[1:T],
+            sigma_o[1:T],
+        )
+
+        def scan_body(carry, xs):
+            theta_s_next, sigma_s_next = carry
+            sigma_f_t, sigma_o_i_tp1, theta_f_t, theta_o_tp1, sigma_o_tp1 = xs
+
+            A_t = jnp.matmul(sigma_f_t, sigma_o_i_tp1)
+
+            diff_theta = theta_s_next - theta_o_tp1
+            theta_s_t = theta_f_t + jnp.matmul(
+                A_t, diff_theta[..., jnp.newaxis]).squeeze(-1)
+
+            diff_sigma = sigma_s_next - sigma_o_tp1
+            sigma_s_t = sigma_f_t + jnp.matmul(
+                jnp.matmul(A_t, diff_sigma),
+                jnp.swapaxes(A_t, -2, -1))
+
+            lag_one_cov_t = jnp.matmul(A_t, sigma_s_next)
+
+            return (theta_s_t, sigma_s_t), (theta_s_t, sigma_s_t, A_t,
+                                            lag_one_cov_t)
+
+        _, outputs = jax.lax.scan(
+            scan_body, init_carry, scan_inputs, reverse=True)
+        theta_s_scan, sigma_s_scan, A_scan, lag_one_cov_scan = outputs
+
+        theta_s = jnp.concatenate([theta_s_scan, theta_f[T - 1:T]], axis=0)
+        sigma_s = jnp.concatenate([sigma_s_scan, sigma_f[T - 1:T]], axis=0)
+
+        return theta_s, sigma_s, A_scan, lag_one_cov_scan
+
     _HAS_JAX = True
 except ImportError:
     _HAS_JAX = False
@@ -276,42 +377,46 @@ def e_step_filter(emd):
     :returns: tuple
         Updated (theta_f, sigma_f, sigma_f_i, sigma_o, sigma_o_i).
     """
-    # Pre-allocate F1 buffer to avoid repeated concatenation.
-    F1 = np.empty((emd.R, emd.N + 1))
-    F1[:, 0] = 1.0
-
-    for t in range(emd.T):
-        if t == 0:
-            emd.theta_o[0] = emd.init_theta
-            emd.sigma_o[0] = emd.init_cov
-            emd.sigma_o_i[0] = np.linalg.inv(emd.sigma_o[0])
-        else:
-            emd.theta_o[t] = emd.theta_f[t - 1]
-            emd.sigma_o[t] = emd.sigma_f[t - 1] + emd.state_cov
-            emd.sigma_o_i[t] = np.linalg.inv(emd.sigma_o[t])
-
-        # Fill F1 in-place (no allocation per time step).
-        F1[:, 1:] = emd.spikes[t]
-
-        if _HAS_JAX:
-            theta_f_t, sigma_f_t, iterations = _nr_loop_jax(
-                jnp.asarray(emd.theta_f[t]),
-                jnp.asarray(F1),
-                jnp.asarray(emd.FSUM[t]),
-                jnp.asarray(emd.sigma_o_i[t]),
-                jnp.asarray(emd.theta_o[t]),
-                emd.R,
-                GA_CONVERGENCE,
-                MAX_GA_ITERATIONS,
+    if _HAS_JAX:
+        results = _e_step_filter_jax(
+            jnp.asarray(emd.spikes[:emd.T]),
+            jnp.asarray(emd.FSUM),
+            jnp.asarray(emd.init_theta),
+            jnp.asarray(emd.init_cov),
+            jnp.asarray(emd.state_cov),
+            emd.R,
+            GA_CONVERGENCE,
+            MAX_GA_ITERATIONS,
+        )
+        theta_f, sigma_f, theta_o, sigma_o, sigma_o_i, iters = results
+        if int(jnp.max(iters)) >= MAX_GA_ITERATIONS:
+            raise Exception(
+                "The gradient-ascent algorithm did not converge before "
+                "reaching the maximum number of iterations."
             )
-            emd.theta_f[t] = np.asarray(theta_f_t)
-            emd.sigma_f[t] = np.asarray(sigma_f_t)
-            if int(iterations) >= MAX_GA_ITERATIONS:
-                raise Exception(
-                    "The gradient-ascent algorithm did not converge before "
-                    "reaching the maximum number of iterations."
-                )
-        else:
+        emd.theta_f[:] = np.asarray(theta_f)
+        emd.sigma_f[:] = np.asarray(sigma_f)
+        emd.theta_o[:] = np.asarray(theta_o)
+        emd.sigma_o[:] = np.asarray(sigma_o)
+        emd.sigma_o_i[:] = np.asarray(sigma_o_i)
+    else:
+        # Pre-allocate F1 buffer to avoid repeated concatenation.
+        F1 = np.empty((emd.R, emd.N + 1))
+        F1[:, 0] = 1.0
+
+        for t in range(emd.T):
+            if t == 0:
+                emd.theta_o[0] = emd.init_theta
+                emd.sigma_o[0] = emd.init_cov
+                emd.sigma_o_i[0] = np.linalg.inv(emd.sigma_o[0])
+            else:
+                emd.theta_o[t] = emd.theta_f[t - 1]
+                emd.sigma_o[t] = emd.sigma_f[t - 1] + emd.state_cov
+                emd.sigma_o_i[t] = np.linalg.inv(emd.sigma_o[t])
+
+            # Fill F1 in-place (no allocation per time step).
+            F1[:, 1:] = emd.spikes[t]
+
             max_dlpo = np.inf
             iterations = 0
 
@@ -492,24 +597,39 @@ def e_step_smooth(emd):
         representing the smoothed covariances, predicted parameters,
         smoothed parameters, lag-one covariance, and transition matrix A.
     """
-    emd.theta_s[emd.T - 1] = emd.theta_f[emd.T - 1]
-    emd.sigma_s[emd.T - 1] = emd.sigma_f[emd.T - 1]
-    for tt in range(emd.T - 1):
-        t = emd.T - 2 - tt
-        # A[t] = sigma_f[t] @ sigma_o_i[t+1]  — batched over N neurons
-        emd.A[t] = np.matmul(emd.sigma_f[t], emd.sigma_o_i[t + 1])
+    if _HAS_JAX:
+        results = _e_step_smooth_jax(
+            jnp.asarray(emd.theta_f),
+            jnp.asarray(emd.sigma_f),
+            jnp.asarray(emd.theta_o),
+            jnp.asarray(emd.sigma_o),
+            jnp.asarray(emd.sigma_o_i),
+        )
+        theta_s, sigma_s, A, lag_one_cov = results
+        emd.theta_s[:] = np.asarray(theta_s)
+        emd.sigma_s[:] = np.asarray(sigma_s)
+        if emd.T > 1:
+            emd.A[:] = np.asarray(A)
+            emd.lag_one_covariance[:emd.T - 1] = np.asarray(lag_one_cov)
+    else:
+        emd.theta_s[emd.T - 1] = emd.theta_f[emd.T - 1]
+        emd.sigma_s[emd.T - 1] = emd.sigma_f[emd.T - 1]
+        for tt in range(emd.T - 1):
+            t = emd.T - 2 - tt
+            # A[t] = sigma_f[t] @ sigma_o_i[t+1]  — batched over N neurons
+            emd.A[t] = np.matmul(emd.sigma_f[t], emd.sigma_o_i[t + 1])
 
-        diff_theta = emd.theta_s[t + 1] - emd.theta_o[t + 1]  # (N, N+1)
-        emd.theta_s[t] = emd.theta_f[t] + np.matmul(
-            emd.A[t], diff_theta[..., np.newaxis]
-        ).squeeze(-1)
+            diff_theta = emd.theta_s[t + 1] - emd.theta_o[t + 1]  # (N, N+1)
+            emd.theta_s[t] = emd.theta_f[t] + np.matmul(
+                emd.A[t], diff_theta[..., np.newaxis]
+            ).squeeze(-1)
 
-        diff_sigma = emd.sigma_s[t + 1] - emd.sigma_o[t + 1]  # (N, N+1, N+1)
-        tmp = np.matmul(np.matmul(emd.A[t], diff_sigma),
-                        emd.A[t].swapaxes(-2, -1))
-        emd.sigma_s[t] = emd.sigma_f[t] + tmp
+            diff_sigma = emd.sigma_s[t + 1] - emd.sigma_o[t + 1]  # (N, N+1, N+1)
+            tmp = np.matmul(np.matmul(emd.A[t], diff_sigma),
+                            emd.A[t].swapaxes(-2, -1))
+            emd.sigma_s[t] = emd.sigma_f[t] + tmp
 
-        emd.lag_one_covariance[t] = np.matmul(emd.A[t], emd.sigma_s[t + 1])
+            emd.lag_one_covariance[t] = np.matmul(emd.A[t], emd.sigma_s[t + 1])
 
     return emd.sigma_s, emd.theta_o, emd.theta_s, emd.lag_one_covariance, emd.A
 

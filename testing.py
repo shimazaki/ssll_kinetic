@@ -599,5 +599,62 @@ class TestEstimator(unittest.TestCase):
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 
+    def test_15_jax_scan_parity(self):
+        """Test that JAX scan E-step matches numpy fallback for all outputs."""
+        try:
+            import jax
+        except ImportError:
+            self.skipTest("JAX not available")
+
+        print("Test JAX scan/numpy parity (full EM).")
+        start_cpu_time = time.process_time()
+
+        THETA, spikes = generate_test_data(self.T, self.R, self.N)
+
+        # Run with JAX scan path (default when JAX available)
+        emd_jax = run_em_with_q_method(spikes, q_method='diagonal')
+
+        # Force numpy fallback and re-run
+        saved_em = exp_max._HAS_JAX
+        saved_pr = probability._HAS_JAX
+        exp_max._HAS_JAX = False
+        probability._HAS_JAX = False
+        try:
+            emd_np = run_em_with_q_method(spikes, q_method='diagonal')
+        finally:
+            exp_max._HAS_JAX = saved_em
+            probability._HAS_JAX = saved_pr
+
+        # Compare all state arrays
+        fields = ['theta_f', 'sigma_f', 'theta_s', 'sigma_s',
+                  'theta_o', 'sigma_o', 'sigma_o_i']
+        for name in fields:
+            arr_jax = getattr(emd_jax, name)
+            arr_np = getattr(emd_np, name)
+            diff = np.max(np.abs(arr_jax - arr_np))
+            print('%s: max diff=%.2e' % (name, diff))
+            self.assertLess(diff, 1e-8, "%s mismatch: %.2e" % (name, diff))
+
+        if emd_jax.T > 1:
+            A_diff = np.max(np.abs(emd_jax.A - emd_np.A))
+            loc_diff = np.max(np.abs(
+                emd_jax.lag_one_covariance[:emd_jax.T - 1] -
+                emd_np.lag_one_covariance[:emd_np.T - 1]))
+            print('A: max diff=%.2e' % A_diff)
+            print('lag_one_covariance: max diff=%.2e' % loc_diff)
+            self.assertLess(A_diff, 1e-8, "A mismatch: %.2e" % A_diff)
+            self.assertLess(loc_diff, 1e-8,
+                            "lag_one_cov mismatch: %.2e" % loc_diff)
+
+        mllk_diff = abs(emd_jax.mllk - emd_np.mllk)
+        print('mllk: JAX=%.6f, numpy=%.6f, diff=%.2e' %
+              (emd_jax.mllk, emd_np.mllk, mllk_diff))
+        self.assertLess(mllk_diff, 1e-6,
+                        "mllk mismatch: %.2e" % mllk_diff)
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
 if __name__ == "__main__":
     unittest.main()

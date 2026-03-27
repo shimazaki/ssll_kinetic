@@ -43,6 +43,25 @@ try:
         """Batched PSI over all T timesteps in a single kernel."""
         return jax.vmap(_compute_psi_jax)(spikes, theta_f)  # (T, N)
 
+    @jax.jit
+    def _log_marginal_jax(sigma_f, sigma_o, sigma_o_i, theta_f, theta_o,
+                          FSUM, spikes_T):
+        """Full log marginal likelihood on device — slogdet, quadratic, PSI."""
+        _, logdet_sigma_f = jnp.linalg.slogdet(sigma_f)
+        _, logdet_sigma_o = jnp.linalg.slogdet(sigma_o)
+
+        a = theta_f - theta_o
+        Sa = jnp.matmul(sigma_o_i, a[..., jnp.newaxis]).squeeze(-1)
+        b = 0.5 * jnp.sum(a * Sa, axis=-1)
+
+        bias = theta_f[:, :, 0][:, jnp.newaxis, :]
+        weights = theta_f[:, :, 1:]
+        logit = bias + jnp.matmul(spikes_T, jnp.swapaxes(weights, -2, -1))
+        PSI = jnp.sum(jnp.logaddexp(0, logit), axis=1)
+
+        q = jnp.sum(theta_f * FSUM, axis=-1) - PSI - b
+        return jnp.sum(0.5 * logdet_sigma_f - 0.5 * logdet_sigma_o + q)
+
     _HAS_JAX = True
 except ImportError:
     _HAS_JAX = False
@@ -66,6 +85,17 @@ def log_marginal(emd):
         float
             The computed log marginal likelihood of the data given the current estimates.
     """
+    if _HAS_JAX:
+        return float(_log_marginal_jax(
+            jnp.asarray(emd.sigma_f),
+            jnp.asarray(emd.sigma_o),
+            jnp.asarray(emd.sigma_o_i),
+            jnp.asarray(emd.theta_f),
+            jnp.asarray(emd.theta_o),
+            jnp.asarray(emd.FSUM),
+            jnp.asarray(emd.spikes[:emd.T]),
+        ))
+
     # 1) Compute log-determinants of sigma_f and sigma_o
     _, logdet_sigma_f = np.linalg.slogdet(emd.sigma_f)
     _, logdet_sigma_o = np.linalg.slogdet(emd.sigma_o)
@@ -76,17 +106,11 @@ def log_marginal(emd):
     b = 0.5 * np.sum(a * Sa, axis=-1)                              # (T,N)
 
     # 3-4) PSI = sum_r logaddexp(0, theta_f @ F1_r) — avoid allocating (T,R,N+1) F_1
-    if _HAS_JAX:
-        PSI = np.asarray(_compute_psi_batch_jax(
-            jnp.asarray(emd.spikes[:emd.T]),
-            jnp.asarray(emd.theta_f)
-        ))  # (T, N)
-    else:
-        #   theta_f @ F1.T = theta_f[:,n,0] (bias) + spikes[:T] @ theta_f[:,n,1:].T (couplings)
-        bias = emd.theta_f[:, :, 0][:, np.newaxis, :]           # (T, 1, N)
-        weights = emd.theta_f[:, :, 1:]                          # (T, N, N)
-        logit = bias + np.matmul(emd.spikes[:emd.T], weights.swapaxes(-2, -1))  # (T, R, N)
-        PSI = np.sum(np.logaddexp(0, logit), axis=1)             # (T, N)
+    #   theta_f @ F1.T = theta_f[:,n,0] (bias) + spikes[:T] @ theta_f[:,n,1:].T (couplings)
+    bias = emd.theta_f[:, :, 0][:, np.newaxis, :]           # (T, 1, N)
+    weights = emd.theta_f[:, :, 1:]                          # (T, N, N)
+    logit = bias + np.matmul(emd.spikes[:emd.T], weights.swapaxes(-2, -1))  # (T, R, N)
+    PSI = np.sum(np.logaddexp(0, logit), axis=1)             # (T, N)
 
     # 5) Compute q = <theta_f, FSUM> - PSI - b
     q = np.sum(emd.theta_f * emd.FSUM, axis=-1) - PSI - b

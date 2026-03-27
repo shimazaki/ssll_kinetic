@@ -8,7 +8,7 @@ Upstream repository: [KenIshihara-17171ken/Non_equ](https://github.com/KenIshiha
 
 ## Dependencies
 
-numpy, matplotlib, joblib, numba
+numpy, matplotlib, joblib, numba. Optional: jax[cuda12] for GPU acceleration (falls back to numpy automatically).
 
 Install via conda (using the `ssll` environment) or pip.
 
@@ -100,6 +100,16 @@ Core routines are vectorized with NumPy broadcasting and `einsum`, avoiding Pyth
 - **FSUM** computation uses a single `einsum` over `(T, R, N)` arrays instead of triple loops
 - **Newton-Raphson filtering** builds the feature matrix once per time step and uses BLAS matrix multiplies for eta/G computation, with peak memory `O(R * N)` instead of `O(R * N^2)`
 - **Q estimation** exploits the algebraic identity `outer(a,a) - outer(a,b) - outer(b,a) + outer(b,b) = outer(a-b, a-b)` to contract directly to `(N, N+1, N+1)`
+
+### JAX GPU acceleration (optional)
+
+When JAX is available, the entire E-step runs on-device with zero host round-trips per EM iteration:
+
+- **Forward filter** (`e_step_filter`): `jax.lax.scan` over T timesteps, each containing a `jax.lax.while_loop` Newton-Raphson solve — compiled into a single XLA program
+- **Backward smoother** (`e_step_smooth`): `jax.lax.scan(reverse=True)` over T-1 timesteps
+- **Log marginal likelihood** (`log_marginal`): slogdet, quadratic penalty, and PSI in one JIT kernel
+
+Falls back to numpy automatically when JAX is unavailable.
 
 ## Running tests
 
