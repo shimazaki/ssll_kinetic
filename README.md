@@ -111,15 +111,29 @@ When JAX is available, the entire E-step runs on-device with zero host round-tri
 
 Falls back to numpy automatically when JAX is unavailable.
 
-**When GPU helps** (benchmarked on V100S-32GB):
+**Benchmark: per-iteration time** (T=500, R=200; CPU = Xeon 6258R on carnot, GPU = A100-80GB on otto):
 
-| Regime | Speedup | Recommendation |
-|--------|---------|----------------|
-| Stationary (`stationary=True`) | ~15x | Always use GPU — trials pool to T*R, large matrices |
-| Non-stationary, N >= 20 | ~2x | GPU beneficial — per-neuron matrices scale as (N+1)^2 |
-| Non-stationary, N <= 10 | 0.4-1x | Use CPU (numpy) — per-timestep matrices too small for GPU overhead |
+Non-stationary:
 
-For non-stationary inference, scaling N (number of neurons) is the dominant factor for GPU benefit because the state covariance and Fisher information matrices grow as (N+1)x(N+1), and the NR linear solve is O((N+1)^3) per neuron per iteration. Scaling R (trials) has a smaller effect since it only affects the eta/G computation.
+| N | CPU (numpy) | GPU (JAX) | Speedup |
+|---|---|---|---|
+| 5 | 0.17s | 0.20s | 0.8x |
+| 10 | 0.32s | 0.28s | 1.2x |
+| 20 | 0.94s | 0.46s | 2.0x |
+| 50 | 15.9s | 2.7s | 5.8x |
+| 100 | 70.2s | 19.9s | 3.5x |
+
+Stationary (`stationary=True`):
+
+| N | CPU (numpy) | GPU (JAX) | Speedup |
+|---|---|---|---|
+| 5 | 0.11s | 0.007s | 15x |
+| 10 | 0.07s | 0.004s | 18x |
+| 20 | 0.31s | 0.010s | 31x |
+| 50 | 4.3s | 0.040s | 107x |
+| 100 | 16.0s | 0.13s | 121x |
+
+**When to use GPU**: Always for stationary mode (15-121x speedup). For non-stationary, GPU helps at N >= 20 (2-6x speedup); at N <= 10, CPU is comparable or faster. N (neurons) is the dominant scaling factor because the state covariance and Fisher information matrices grow as (N+1)x(N+1), and the NR linear solve is O((N+1)^3) per neuron per iteration.
 
 To force the numpy path when JAX is installed, set `exp_max._HAS_JAX = False` and `probability._HAS_JAX = False` before calling `run()`.
 
