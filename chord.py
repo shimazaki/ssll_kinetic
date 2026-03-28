@@ -342,3 +342,47 @@ def show_chord_snapshots(emd, dt, times, threshold=0, curvature=0.3,
         fig.savefig(fp_chord, dpi=dpi, bbox_inches='tight')
 
     plt.show()
+
+
+def render(N, T=30, R=400, seed=42, max_iter=50, dt=0.02,
+           t_single=15, times=None, threshold=0, mu=0.2,
+           fig_dir='fig'):
+    """
+    End-to-end: generate synthetic data, run EM, save chord diagrams.
+
+    :param N: int — number of neurons.
+    :param T: int — number of time bins.
+    :param R: int — number of trials.
+    :param seed: int — random seed.
+    :param max_iter: int — max EM iterations.
+    :param dt: float — bin size in seconds.
+    :param t_single: int — time bin for single-frame diagram.
+    :param times: list of float — times for snapshot panels (default [0.1, 0.3, 0.5]).
+    :param threshold: float — percentile threshold (0-100).
+    :param mu: float — mean coupling strength for synthesis.
+    :param fig_dir: str — output directory for PNGs.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    from . import synthesis, run
+
+    if times is None:
+        times = [0.1, 0.3, 0.5]
+
+    np.random.seed(seed)
+    thetas = synthesis.generate_thetas(T, N, mu=mu)
+    spikes = synthesis.generate_spikes(T, R, N, thetas)
+    emd = run(spikes, max_iter=max_iter, mstep=True, state_cov=0.5)
+
+    tag = 'N%d' % N
+    _ensure_save_dir(os.path.join(fig_dir, 'dummy'))
+    fp_single = os.path.join(fig_dir, 'chord_%s.png' % tag)
+    fp_snap = os.path.join(fig_dir, 'chord_%s_snapshots.png' % tag)
+
+    show_chord(emd, dt=dt, t=t_single, threshold=threshold,
+               fp_chord=fp_single)
+    print('%s single saved: %s' % (tag, fp_single))
+
+    show_chord_snapshots(emd, dt=dt, times=times, threshold=threshold,
+                         fp_chord=fp_snap)
+    print('%s snapshots saved: %s' % (tag, fp_snap))
