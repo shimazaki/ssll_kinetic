@@ -44,6 +44,10 @@ Single-level Python package (`ssll_kinetic/`) with no subpackages:
   - Two equivalent formulations: chi-based (`update_S`, `update_S_re`) and h-psi decomposition (`update_S_alt`, `update_S_re_alt`); see Eqs. 47-48, 57-58 in the paper
 - **`testing.py`** — 16 unit tests covering EM, entropy flow, parameter recovery, formulation equivalence, stationary analysis, JAX/numpy parity, and JAX scan/numpy parity
 
+## Important: spike array dtype
+
+Spikes must be `float64`, `float32`, or `int32` — **never `int8`**. The `FSUM` computation in `container.py` uses `np.einsum('trn,trm->tnm', current, prev)` which accumulates in the input dtype. With `int8`, sums > 127 overflow silently, corrupting sufficient statistics and causing NR divergence.
+
 ## Data Dimensions
 
 - **Spikes**: `(T+1, R, N)` — T time bins, R trials, N neurons
