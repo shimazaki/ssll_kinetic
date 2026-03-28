@@ -1,9 +1,8 @@
 numpy
-matplotlib
+matplotlib>=3.5
 ipython
 joblib
 numba
 
-# Optional: GPU acceleration (requires CUDA 12)
-# Install in a Python >=3.11 environment (e.g. conda activate py311)
+# GPU acceleration (requires CUDA 12)
 # jax[cuda12]

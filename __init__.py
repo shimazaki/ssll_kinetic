@@ -27,12 +27,14 @@ __version__ = "0.1.0"
 
 import numpy as np
 import time
+from tqdm import tqdm
 
 from . import container
 from . import exp_max
 from .probability import log_marginal
 
-def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False):
+def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
+        EM_Info=True, u=None):
     """
     Runs the Expectation-Maximization (EM) algorithm to fit the state-space kinetic Ising model
     to spike data.
@@ -56,6 +58,9 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False):
         If True, fit a time-independent model by pooling all T*R transition
         observations into a single time step. Spikes (T+1, R, N) are reshaped
         to (2, T*R, N) and state_cov is forced to 0. Default is False.
+    :param bool EM_Info:
+        If True, display a tqdm progress bar during EM iterations and print
+        final results. Default is True.
 
     :returns:
         container.EMData
@@ -74,9 +79,11 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False):
         to_states = spikes[1:].reshape(T * R, N)
         spikes = np.stack([from_states, to_states])  # (2, T*R, N)
         state_cov = 0
+        if u is not None:
+            u = u.mean(axis=0, keepdims=True)
 
     # Initialize the EMData container with the given spike data
-    emd = container.EMData(spikes, state_cov=state_cov)
+    emd = container.EMData(spikes, state_cov=state_cov, u=u)
 
     # Compute the initial marginal log likelihood
     lmc = emd.marg_llk(emd)
@@ -86,10 +93,9 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False):
     emd.iterations = 0
 
     # EM loop
+    pbar = tqdm(total=max_iter, desc='EM', disable=not EM_Info)
     while emd.iterations < max_iter and (emd.convergence > emd.CONVERGED):
-        print(
-            f"EM Iteration: {emd.iterations} - Convergence {emd.convergence:.6f} > {emd.CONVERGED:.6f}"
-        )
+        pbar.set_postfix(conv=f'{emd.convergence:.6f}')
 
         # E-step timing
         t0 = time.perf_counter()
@@ -114,13 +120,17 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False):
 
         emd.iterations += 1
         emd.convergence = (lmp - lmc) / lmp if lmp != 0 else 0.0
+        pbar.update(1)
+    pbar.close()
 
     # Compute AIC after finishing
     if stationary:
         emd.dim_param = emd.N * (emd.N + 1)
+    if emd.G is not None and emd.T > 1:
+        emd.dim_param += emd.N * (emd.N + 1) * emd.d_u
     emd.aic = -2 * emd.mllk + 2 * emd.dim_param
-    print("Log Likelihood:", emd.mllk, "iter:", emd.iterations)
-    print("emd.dim_param:", emd.dim_param)
-    print("AIC:", emd.aic)
+    if EM_Info:
+        print('Log marginal likelihood = %.6f (%d iterations)' %
+              (emd.mllk, emd.iterations))
 
     return emd

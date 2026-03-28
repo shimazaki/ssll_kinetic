@@ -74,12 +74,14 @@ try:
     _nr_loop_jax = jax.jit(_nr_loop_jax, static_argnums=(5,))
 
     def _e_step_filter_jax_fn(spikes_T, FSUM, init_theta, init_cov, state_cov,
-                               theta_f_init, R, ga_convergence,
-                               max_ga_iterations):
+                               theta_f_init, G_input, u_input, R,
+                               ga_convergence, max_ga_iterations):
         """Full forward filter via jax.lax.scan — zero host round-trips.
 
         theta_f_init: (T, N, N+1) NR starting points (previous EM iteration's
                       theta_f, or zeros on first iteration).
+        G_input: (N, N+1, d_u) exogenous input gain matrix (zeros when no input).
+        u_input: (T, d_u) exogenous input (u[0] zeroed out for t=0 trick).
         """
         N = init_theta.shape[0]
         Np1 = init_theta.shape[1]
@@ -93,9 +95,9 @@ try:
 
         def scan_body(carry, xs):
             theta_f_prev, sigma_f_prev = carry
-            F1_t, FSUM_t, theta_f_start = xs
+            F1_t, FSUM_t, theta_f_start, u_t = xs
 
-            theta_o = theta_f_prev
+            theta_o = theta_f_prev + jnp.einsum('ndu,u->nd', G_input, u_t)
             sigma_o = sigma_f_prev + state_cov
             sigma_o_i = jnp.linalg.inv(sigma_o)
 
@@ -130,11 +132,11 @@ try:
                                         sigma_o_i, iters)
 
         _, outputs = jax.lax.scan(
-            scan_body, init_carry, (F1_all, FSUM, theta_f_init))
+            scan_body, init_carry, (F1_all, FSUM, theta_f_init, u_input))
         return outputs
 
     _e_step_filter_jax = jax.jit(
-        _e_step_filter_jax_fn, static_argnums=(6, 7, 8))
+        _e_step_filter_jax_fn, static_argnums=(8, 9, 10))
 
     @jax.jit
     def _e_step_smooth_jax(theta_f, sigma_f, theta_o, sigma_o, sigma_o_i):
@@ -203,6 +205,32 @@ def e_step(emd):
     # If parallel smoothing is preferred, uncomment:
     # e_step_smooth_parallel(emd)
 
+def m_step_G(emd):
+    """Closed-form M-step update for exogenous input gain G.
+
+    G* = [sum_t (theta_s[t] - theta_s[t-1]) u[t]^T] [sum_t u[t] u[t]^T]^{-1}
+
+    Updates emd.G in-place. Skipped when T <= 1 (unidentifiable).
+    """
+    if emd.T <= 1:
+        return
+    # residual: (T-1, N, N+1)
+    residual = emd.theta_s[1:] - emd.theta_s[:emd.T - 1]
+    u = emd.u[1:emd.T]  # (T-1, d_u)
+    # numerator: sum_t residual[t] @ u[t]^T -> (N, N+1, d_u)
+    num = np.einsum('tnd,tu->ndu', residual, u)
+    # denominator: sum_t u[t] @ u[t]^T -> (d_u, d_u)
+    denom = u.T @ u
+    # Solve per-neuron: G[n] = num[n] @ denom^{-1}
+    # num[n] is (N+1, d_u), denom is (d_u, d_u)
+    # lstsq(denom.T, num[n].T) solves denom.T @ X = num[n].T -> X = (d_u, N+1)
+    # G[n] = X.T = (N+1, d_u)
+    # Use lstsq for robustness when u is near-zero or collinear.
+    for n in range(emd.N):
+        sol, _, _, _ = np.linalg.lstsq(denom, num[n].T, rcond=None)
+        emd.G[n] = sol.T
+
+
 def m_step(emd):
     """
     Performs the M-step of the EM algorithm, updating state covariance and initial covariance matrices.
@@ -227,6 +255,8 @@ def m_step(emd):
         elif sc0.ndim == 2:
             get_full_Q(emd)
     get_init_cov(emd)
+    if emd.G is not None:
+        m_step_G(emd)
 
 def get_init_theta(emd):
     """
@@ -268,6 +298,9 @@ def _compute_raw_Q(emd):
         return np.zeros((emd.N, emd.N+1, emd.N+1)), False
     # diff: (T-1, N, N+1)
     diff = emd.theta_s[1:] - emd.theta_s[:emd.T-1]
+    if emd.G is not None:
+        Gu = np.einsum('ndu,tu->tnd', emd.G, emd.u[1:emd.T])
+        diff = diff - Gu
     # dd: (N, N+1, N+1) — outer products contracted over time
     dd = np.einsum('tni,tnj->nij', diff, diff)
     # Covariance terms
@@ -384,6 +417,16 @@ def e_step_filter(emd):
         Updated (theta_f, sigma_f, sigma_f_i, sigma_o, sigma_o_i).
     """
     if _HAS_JAX:
+        # Prepare G and u for JAX: use zero arrays when no exogenous input
+        # so the scan body has fixed shapes (no branching in JIT).
+        # u[0] is zeroed so t=0 prediction remains init_theta.
+        if emd.G is not None:
+            G_jax = jnp.asarray(emd.G)
+            u_jax = jnp.asarray(emd.u[:emd.T])
+            u_jax = u_jax.at[0].set(0.0)
+        else:
+            G_jax = jnp.zeros((emd.N, emd.N + 1, 1))
+            u_jax = jnp.zeros((emd.T, 1))
         results = _e_step_filter_jax(
             jnp.asarray(emd.spikes[:emd.T]),
             jnp.asarray(emd.FSUM),
@@ -391,13 +434,15 @@ def e_step_filter(emd):
             jnp.asarray(emd.init_cov),
             jnp.asarray(emd.state_cov),
             jnp.asarray(emd.theta_f),
+            G_jax,
+            u_jax,
             emd.R,
             GA_CONVERGENCE,
             MAX_GA_ITERATIONS,
         )
         theta_f, sigma_f, theta_o, sigma_o, sigma_o_i, iters = results
         if int(jnp.max(iters)) >= MAX_GA_ITERATIONS:
-            raise Exception(
+            raise RuntimeError(
                 "The gradient-ascent algorithm did not converge before "
                 "reaching the maximum number of iterations."
             )
@@ -418,6 +463,8 @@ def e_step_filter(emd):
                 emd.sigma_o_i[0] = np.linalg.inv(emd.sigma_o[0])
             else:
                 emd.theta_o[t] = emd.theta_f[t - 1]
+                if emd.G is not None:
+                    emd.theta_o[t] += np.einsum('ndu,u->nd', emd.G, emd.u[t])
                 emd.sigma_o[t] = emd.sigma_f[t - 1] + emd.state_cov
                 emd.sigma_o_i[t] = np.linalg.inv(emd.sigma_o[t])
 
@@ -445,7 +492,7 @@ def e_step_filter(emd):
                 iterations += 1
 
                 if iterations == MAX_GA_ITERATIONS:
-                    raise Exception(
+                    raise RuntimeError(
                         "The gradient-ascent algorithm did not converge before "
                         "reaching the maximum number of iterations."
                     )
@@ -522,7 +569,7 @@ def process_single_i(theta_f_t_i, sigma_o_i_t_i, theta_o_t_i, FSUM_t_i,
         max_dlpo = np.amax(np.absolute(dlpo)) / R
         iterations += 1
         if iterations == MAX_GA_ITERATIONS:
-            raise Exception(
+            raise RuntimeError(
                 "Gradient-ascent algorithm did not converge within "
                 "MAX_GA_ITERATIONS."
             )

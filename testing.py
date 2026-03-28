@@ -108,7 +108,8 @@ def run_em_with_q_method(spikes, q_method='diagonal', max_iter=100):
         'full': 0.5 * np.identity(N + 1),
     }
     state_cov = state_cov_map[q_method]
-    return ssll_kinetic.run(spikes, max_iter=max_iter, state_cov=state_cov)
+    return ssll_kinetic.run(spikes, max_iter=max_iter, state_cov=state_cov,
+                            EM_Info=False)
 
 
 class TestEstimator(unittest.TestCase):
@@ -205,7 +206,7 @@ class TestEstimator(unittest.TestCase):
         start_cpu_time = time.process_time()
 
         THETA, spikes = generate_test_data(self.T, self.R, self.N)
-        emd = ssll_kinetic.run(spikes, max_iter=100, mstep=False)
+        emd = ssll_kinetic.run(spikes, max_iter=100, mstep=False, EM_Info=False)
 
         print('Log marginal likelihood = %.6f (expected %.6f)' %
               (emd.mllk, EXPECTED_MLLK_NO_MSTEP))
@@ -451,7 +452,8 @@ class TestEstimator(unittest.TestCase):
         np.random.seed(DEFAULT_SPIKE_SEED)
         spikes = synthesis.generate_spikes(T, R, N, THETA)
 
-        emd = ssll_kinetic.run(spikes, max_iter=50, stationary=True)
+        emd = ssll_kinetic.run(spikes, max_iter=50, stationary=True,
+                               EM_Info=False)
 
         # Should have pooled T*R trials into a single time step
         self.assertEqual(emd.T, 1)
@@ -487,7 +489,8 @@ class TestEstimator(unittest.TestCase):
         np.random.seed(DEFAULT_SPIKE_SEED)
         spikes = synthesis.generate_spikes(T, R, N, THETA)
 
-        emd = ssll_kinetic.run(spikes, max_iter=50, stationary=True)
+        emd = ssll_kinetic.run(spikes, max_iter=50, stationary=True,
+                               EM_Info=False)
         sf, sr, s_net, M = entropy_flow.compute_entropy_flow(emd)
 
         # Shapes should be (1, N) from unified interface
@@ -651,6 +654,180 @@ class TestEstimator(unittest.TestCase):
               (emd_jax.mllk, emd_np.mllk, mllk_diff))
         self.assertLess(mllk_diff, 1e-6,
                         "mllk mismatch: %.2e" % mllk_diff)
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
+    def test_16_exogenous_basic(self):
+        """Test EM with exogenous input u: G shape, convergence, finite mllk."""
+        print("Test Exogenous Input (basic).")
+        start_cpu_time = time.process_time()
+
+        THETA, spikes = generate_test_data(self.T, self.R, self.N)
+        d_u = 2
+        np.random.seed(99)
+        u = np.random.randn(self.T, d_u) * 0.1
+
+        emd = ssll_kinetic.run(spikes, max_iter=500, state_cov=0.5, u=u,
+                                EM_Info=False)
+
+        # G should have correct shape
+        self.assertEqual(emd.G.shape, (self.N, self.N + 1, d_u))
+        # Should converge
+        self.assertLess(emd.iterations, 500,
+                        "EM with exogenous input should converge")
+        # mllk should be finite
+        self.assertTrue(np.isfinite(emd.mllk),
+                        "mllk should be finite with exogenous input")
+        # AIC should include G params
+        expected_g_params = self.N * (self.N + 1) * d_u
+        # dim_param from scalar Q + G params
+        self.assertGreaterEqual(emd.dim_param, expected_g_params)
+
+        end_cpu_time = time.process_time()
+        print('mllk=%.6f, iterations=%d, G norm=%.4f' %
+              (emd.mllk, emd.iterations, np.linalg.norm(emd.G)))
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+    def test_17_exogenous_zero_u(self):
+        """Test that u=zeros produces identical results to u=None."""
+        print("Test Exogenous Zero Input (regression).")
+        start_cpu_time = time.process_time()
+
+        THETA, spikes = generate_test_data(self.T, self.R, self.N)
+        d_u = 2
+        u_zero = np.zeros((self.T, d_u))
+
+        emd_none = ssll_kinetic.run(spikes, max_iter=50, state_cov=0.5,
+                                     u=None, EM_Info=False)
+        emd_zero = ssll_kinetic.run(spikes, max_iter=50, state_cov=0.5,
+                                     u=u_zero, EM_Info=False)
+
+        # theta_s should be identical (G*0 = 0 at every step)
+        diff = np.max(np.abs(emd_none.theta_s - emd_zero.theta_s))
+        print('theta_s max diff (None vs zeros): %.2e' % diff)
+        self.assertLess(diff, 1e-8,
+                        "u=zeros should match u=None: diff=%.2e" % diff)
+
+        mllk_diff = abs(emd_none.mllk - emd_zero.mllk)
+        print('mllk diff: %.2e' % mllk_diff)
+        self.assertLess(mllk_diff, 1e-6,
+                        "mllk should match: diff=%.2e" % mllk_diff)
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+    def test_18_exogenous_G_recovery(self):
+        """Test that EM recovers the true G matrix from synthetic data.
+
+        Generates theta trajectories with a known G and u via the state equation
+        theta_t = theta_{t-1} + G*u_t + xi_t, then generates spikes from those
+        thetas. The EM should recover G with high correlation to the true G.
+        """
+        print("Test Exogenous G Recovery.")
+        start_cpu_time = time.process_time()
+
+        T, R, N = 200, 200, 2
+        d_u = 2
+        rng = np.random.RandomState(42)
+
+        # True G: (N, N+1, d_u) — moderate magnitude
+        G_true = rng.randn(N, N + 1, d_u) * 0.3
+
+        # Exogenous input: smooth sinusoidal signals
+        t_axis = np.arange(T)
+        u = np.column_stack([
+            np.sin(2 * np.pi * t_axis / 50),
+            np.cos(2 * np.pi * t_axis / 30),
+        ])  # (T, d_u)
+
+        # Generate theta trajectories: theta_t = theta_{t-1} + G*u_t + xi_t
+        state_noise_std = 0.02
+        THETA = np.zeros((T, N, N + 1))
+        THETA[0] = rng.randn(N, N + 1) * 0.5
+        for t in range(1, T):
+            Gu = np.einsum('ndu,u->nd', G_true, u[t])
+            THETA[t] = THETA[t - 1] + Gu + rng.randn(N, N + 1) * state_noise_std
+
+        # Generate spikes from these thetas
+        rng2 = np.random.RandomState(7)
+        spikes = np.zeros((T + 1, R, N))
+        rand_numbers = rng2.rand(T + 1, R, N)
+        spikes[0] = (rand_numbers[0] >= 0.5).astype(int)
+        for t in range(1, T + 1):
+            F_psi = np.concatenate([np.ones((R, 1)), spikes[t - 1]], axis=1)
+            logit = THETA[t - 1] @ F_psi.T  # (N, R)
+            prob = 1 / (1 + np.exp(-logit))  # (N, R)
+            spikes[t] = (prob.T >= rand_numbers[t]).astype(int)
+
+        # Run EM with exogenous input
+        emd = ssll_kinetic.run(spikes, max_iter=500, state_cov=0.5, u=u,
+                                EM_Info=False)
+
+        # Check G recovery: correlation between true and estimated G
+        G_est = emd.G
+        corr = np.corrcoef(G_true.ravel(), G_est.ravel())[0, 1]
+        # Relative error
+        rel_err = np.linalg.norm(G_est - G_true) / np.linalg.norm(G_true)
+
+        print('G recovery: correlation=%.4f, relative error=%.4f' %
+              (corr, rel_err))
+        print('G_true (flat):', np.round(G_true.ravel(), 3))
+        print('G_est  (flat):', np.round(G_est.ravel(), 3))
+
+        self.assertGreater(corr, 0.9,
+            "G recovery correlation should be > 0.9 (got %.4f)" % corr)
+        self.assertLess(rel_err, 0.5,
+            "G relative error should be < 0.5 (got %.4f)" % rel_err)
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+    def test_19_exogenous_jax_numpy_parity(self):
+        """Test JAX and numpy paths agree with exogenous input."""
+        try:
+            import jax
+        except ImportError:
+            self.skipTest("JAX not available")
+
+        print("Test Exogenous JAX/numpy parity.")
+        start_cpu_time = time.process_time()
+
+        THETA, spikes = generate_test_data(self.T, self.R, self.N)
+        d_u = 2
+        np.random.seed(99)
+        u = np.random.randn(self.T, d_u) * 0.1
+
+        # JAX path
+        emd_jax = ssll_kinetic.run(spikes, max_iter=50, state_cov=0.5, u=u,
+                                    EM_Info=False)
+
+        # Force numpy fallback
+        saved_em = exp_max._HAS_JAX
+        saved_pr = probability._HAS_JAX
+        exp_max._HAS_JAX = False
+        probability._HAS_JAX = False
+        try:
+            emd_np = ssll_kinetic.run(spikes, max_iter=50, state_cov=0.5, u=u,
+                                       EM_Info=False)
+        finally:
+            exp_max._HAS_JAX = saved_em
+            probability._HAS_JAX = saved_pr
+
+        for name in ['theta_f', 'sigma_f', 'theta_s', 'sigma_s']:
+            diff = np.max(np.abs(getattr(emd_jax, name) - getattr(emd_np, name)))
+            print('%s: max diff=%.2e' % (name, diff))
+            self.assertLess(diff, 1e-8, "%s mismatch: %.2e" % (name, diff))
+
+        mllk_diff = abs(emd_jax.mllk - emd_np.mllk)
+        print('mllk diff: %.2e' % mllk_diff)
+        self.assertLess(mllk_diff, 1e-6, "mllk mismatch: %.2e" % mllk_diff)
+
+        # G should also agree
+        G_diff = np.max(np.abs(emd_jax.G - emd_np.G))
+        print('G diff: %.2e' % G_diff)
+        self.assertLess(G_diff, 1e-8, "G mismatch: %.2e" % G_diff)
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
