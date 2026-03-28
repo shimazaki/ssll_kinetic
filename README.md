@@ -137,6 +137,18 @@ Stationary (`stationary=True`):
 
 To force the numpy path when JAX is installed, set `exp_max._HAS_JAX = False` and `probability._HAS_JAX = False` before calling `run()`.
 
+## Important: spike array dtype
+
+The `spikes` array must use a dtype that does not overflow during internal `einsum` accumulation (e.g., `float64`, `float32`, or `int32`). **Do not pass `int8` arrays** — `container.py` computes `FSUM` via `np.einsum('trn,trm->tnm', current, prev)`, which accumulates in the input dtype. With `int8`, sums exceeding 127 silently overflow to negative values, corrupting the sufficient statistics and causing Newton-Raphson divergence.
+
+```python
+# Wrong — int8 overflows for R > 127
+spikes = binary_data.astype(np.int8)
+
+# Correct — float64 is safest (matches all internal computations)
+spikes = binary_data.astype(np.float64)
+```
+
 ## Running tests
 
 ```bash
