@@ -47,21 +47,21 @@ DEFAULT_R = 20   # Number of trials
 DEFAULT_N = 3    # Number of neurons
 DEFAULT_THETA_SEED = 42   # Random seed for theta generation
 DEFAULT_SPIKE_SEED = 1    # Random seed for spike generation
-DEFAULT_MLLK_TOLERANCE = 1e-6  # Tolerance for log marginal likelihood comparison
+DEFAULT_MLL_TOLERANCE = 1e-6  # Tolerance for log marginal likelihood comparison
 DEFAULT_ENTROPY_TOLERANCE = 1e-4  # Tolerance for entropy flow comparison
 
 # Expected Spike Count
 EXPECTED_SPIKE_COUNT = 1094  # Total spikes for T=20, R=20, N=3
 
 # Expected Log Marginal Likelihood Values
-EXPECTED_MLLK_DIAGONAL_Q = -261.296332
-EXPECTED_MLLK_FULL_Q = -256.209241
-EXPECTED_MLLK_SCALAR_Q = -263.798103
-EXPECTED_MLLK_NO_MSTEP = -278.074169
+EXPECTED_MLL_DIAGONAL_Q = -261.296332
+EXPECTED_MLL_FULL_Q = -256.209241
+EXPECTED_MLL_SCALAR_Q = -263.798103
+EXPECTED_MLL_NO_MSTEP = -278.074169
 
 # Edge Case Expected Values
-EXPECTED_MLLK_SINGLE_NEURON = -142.615633
-EXPECTED_MLLK_SINGLE_TRIAL = -17.170574
+EXPECTED_MLL_SINGLE_NEURON = -142.615633
+EXPECTED_MLL_SINGLE_TRIAL = -17.170574
 
 # Expected Entropy Flow Values (diagonal Q, T=20, R=20, N=3)
 EXPECTED_TOTAL_FORWARD_ENTROPY = 11.493761
@@ -152,11 +152,11 @@ class TestEstimator(unittest.TestCase):
         emd = run_em_with_q_method(spikes, q_method='diagonal')
 
         print('Log marginal likelihood = %.6f (expected %.6f)' %
-              (emd.mllk, EXPECTED_MLLK_DIAGONAL_Q))
+              (emd.mll, EXPECTED_MLL_DIAGONAL_Q))
         self.assertFalse(
-            np.absolute(emd.mllk - EXPECTED_MLLK_DIAGONAL_Q) > DEFAULT_MLLK_TOLERANCE,
-            "Diagonal Q mllk mismatch: got %.6f, expected %.6f" %
-            (emd.mllk, EXPECTED_MLLK_DIAGONAL_Q))
+            np.absolute(emd.mll - EXPECTED_MLL_DIAGONAL_Q) > DEFAULT_MLL_TOLERANCE,
+            "Diagonal Q mll mismatch: got %.6f, expected %.6f" %
+            (emd.mll, EXPECTED_MLL_DIAGONAL_Q))
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
@@ -171,11 +171,11 @@ class TestEstimator(unittest.TestCase):
         emd = run_em_with_q_method(spikes, q_method='full')
 
         print('Log marginal likelihood = %.6f (expected %.6f)' %
-              (emd.mllk, EXPECTED_MLLK_FULL_Q))
+              (emd.mll, EXPECTED_MLL_FULL_Q))
         self.assertFalse(
-            np.absolute(emd.mllk - EXPECTED_MLLK_FULL_Q) > DEFAULT_MLLK_TOLERANCE,
-            "Full Q mllk mismatch: got %.6f, expected %.6f" %
-            (emd.mllk, EXPECTED_MLLK_FULL_Q))
+            np.absolute(emd.mll - EXPECTED_MLL_FULL_Q) > DEFAULT_MLL_TOLERANCE,
+            "Full Q mll mismatch: got %.6f, expected %.6f" %
+            (emd.mll, EXPECTED_MLL_FULL_Q))
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
@@ -190,11 +190,11 @@ class TestEstimator(unittest.TestCase):
         emd = run_em_with_q_method(spikes, q_method='scalar')
 
         print('Log marginal likelihood = %.6f (expected %.6f)' %
-              (emd.mllk, EXPECTED_MLLK_SCALAR_Q))
+              (emd.mll, EXPECTED_MLL_SCALAR_Q))
         self.assertFalse(
-            np.absolute(emd.mllk - EXPECTED_MLLK_SCALAR_Q) > DEFAULT_MLLK_TOLERANCE,
-            "Scalar Q mllk mismatch: got %.6f, expected %.6f" %
-            (emd.mllk, EXPECTED_MLLK_SCALAR_Q))
+            np.absolute(emd.mll - EXPECTED_MLL_SCALAR_Q) > DEFAULT_MLL_TOLERANCE,
+            "Scalar Q mll mismatch: got %.6f, expected %.6f" %
+            (emd.mll, EXPECTED_MLL_SCALAR_Q))
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
@@ -209,11 +209,11 @@ class TestEstimator(unittest.TestCase):
         emd = ssll_kinetic.run(spikes, max_iter=100, mstep=False, EM_Info=False)
 
         print('Log marginal likelihood = %.6f (expected %.6f)' %
-              (emd.mllk, EXPECTED_MLLK_NO_MSTEP))
+              (emd.mll, EXPECTED_MLL_NO_MSTEP))
         self.assertFalse(
-            np.absolute(emd.mllk - EXPECTED_MLLK_NO_MSTEP) > DEFAULT_MLLK_TOLERANCE,
-            "No M-step mllk mismatch: got %.6f, expected %.6f" %
-            (emd.mllk, EXPECTED_MLLK_NO_MSTEP))
+            np.absolute(emd.mll - EXPECTED_MLL_NO_MSTEP) > DEFAULT_MLL_TOLERANCE,
+            "No M-step mll mismatch: got %.6f, expected %.6f" %
+            (emd.mll, EXPECTED_MLL_NO_MSTEP))
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
@@ -227,11 +227,11 @@ class TestEstimator(unittest.TestCase):
         emd = run_em_with_q_method(spikes, q_method='diagonal')
 
         print('Log marginal likelihood = %.6f (expected %.6f)' %
-              (emd.mllk, EXPECTED_MLLK_SINGLE_NEURON))
+              (emd.mll, EXPECTED_MLL_SINGLE_NEURON))
         self.assertFalse(
-            np.absolute(emd.mllk - EXPECTED_MLLK_SINGLE_NEURON) > DEFAULT_MLLK_TOLERANCE,
-            "Single neuron mllk mismatch: got %.6f, expected %.6f" %
-            (emd.mllk, EXPECTED_MLLK_SINGLE_NEURON))
+            np.absolute(emd.mll - EXPECTED_MLL_SINGLE_NEURON) > DEFAULT_MLL_TOLERANCE,
+            "Single neuron mll mismatch: got %.6f, expected %.6f" %
+            (emd.mll, EXPECTED_MLL_SINGLE_NEURON))
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
@@ -245,11 +245,11 @@ class TestEstimator(unittest.TestCase):
         emd = run_em_with_q_method(spikes, q_method='diagonal')
 
         print('Log marginal likelihood = %.6f (expected %.6f)' %
-              (emd.mllk, EXPECTED_MLLK_SINGLE_TRIAL))
+              (emd.mll, EXPECTED_MLL_SINGLE_TRIAL))
         self.assertFalse(
-            np.absolute(emd.mllk - EXPECTED_MLLK_SINGLE_TRIAL) > DEFAULT_MLLK_TOLERANCE,
-            "Single trial mllk mismatch: got %.6f, expected %.6f" %
-            (emd.mllk, EXPECTED_MLLK_SINGLE_TRIAL))
+            np.absolute(emd.mll - EXPECTED_MLL_SINGLE_TRIAL) > DEFAULT_MLL_TOLERANCE,
+            "Single trial mll mismatch: got %.6f, expected %.6f" %
+            (emd.mll, EXPECTED_MLL_SINGLE_TRIAL))
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
@@ -327,8 +327,8 @@ class TestEstimator(unittest.TestCase):
                         "EM should converge before reaching max_iter=500")
 
         # Log marginal likelihood should be monotonically non-decreasing
-        mllk_array = np.array(emd.mllk_list)
-        diffs = np.diff(mllk_array)
+        mll_array = np.array(emd.mll_list)
+        diffs = np.diff(mll_array)
         # Allow small numerical violations (1e-10)
         self.assertTrue(np.all(diffs >= -1e-10),
                         "Log marginal likelihood should be monotonically non-decreasing")
@@ -466,7 +466,7 @@ class TestEstimator(unittest.TestCase):
 
         # dim_pram and AIC should be set
         self.assertEqual(emd.dim_param, N * (N + 1))
-        expected_aic = -2 * emd.mllk + 2 * emd.dim_param
+        expected_aic = -2 * emd.mll + 2 * emd.dim_param
         self.assertAlmostEqual(emd.aic, expected_aic, places=6)
 
         # Should converge
@@ -589,14 +589,14 @@ class TestEstimator(unittest.TestCase):
         print('PSI: max diff=%.2e' % psi_diff)
         self.assertLess(psi_diff, 1e-10, "PSI mismatch: %.2e" % psi_diff)
 
-        # --- Test full EM parity: force numpy path, compare mllk ---
-        # The existing tests already check mllk against expected values,
-        # so if JAX path produces the same mllk, parity is confirmed.
-        print('EM mllk (JAX path): %.6f (expected %.6f)' %
-              (emd.mllk, EXPECTED_MLLK_DIAGONAL_Q))
+        # --- Test full EM parity: force numpy path, compare mll ---
+        # The existing tests already check mll against expected values,
+        # so if JAX path produces the same mll, parity is confirmed.
+        print('EM mll (JAX path): %.6f (expected %.6f)' %
+              (emd.mll, EXPECTED_MLL_DIAGONAL_Q))
         self.assertFalse(
-            np.absolute(emd.mllk - EXPECTED_MLLK_DIAGONAL_Q) > DEFAULT_MLLK_TOLERANCE,
-            "JAX-path EM mllk should match expected value")
+            np.absolute(emd.mll - EXPECTED_MLL_DIAGONAL_Q) > DEFAULT_MLL_TOLERANCE,
+            "JAX-path EM mll should match expected value")
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
@@ -649,18 +649,18 @@ class TestEstimator(unittest.TestCase):
             self.assertLess(loc_diff, 1e-8,
                             "lag_one_cov mismatch: %.2e" % loc_diff)
 
-        mllk_diff = abs(emd_jax.mllk - emd_np.mllk)
-        print('mllk: JAX=%.6f, numpy=%.6f, diff=%.2e' %
-              (emd_jax.mllk, emd_np.mllk, mllk_diff))
-        self.assertLess(mllk_diff, 1e-6,
-                        "mllk mismatch: %.2e" % mllk_diff)
+        mll_diff = abs(emd_jax.mll - emd_np.mll)
+        print('mll: JAX=%.6f, numpy=%.6f, diff=%.2e' %
+              (emd_jax.mll, emd_np.mll, mll_diff))
+        self.assertLess(mll_diff, 1e-6,
+                        "mll mismatch: %.2e" % mll_diff)
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 
     def test_16_exogenous_basic(self):
-        """Test EM with exogenous input u: G shape, convergence, finite mllk."""
+        """Test EM with exogenous input u: G shape, convergence, finite mll."""
         print("Test Exogenous Input (basic).")
         start_cpu_time = time.process_time()
 
@@ -677,17 +677,17 @@ class TestEstimator(unittest.TestCase):
         # Should converge
         self.assertLess(emd.iterations, 500,
                         "EM with exogenous input should converge")
-        # mllk should be finite
-        self.assertTrue(np.isfinite(emd.mllk),
-                        "mllk should be finite with exogenous input")
+        # mll should be finite
+        self.assertTrue(np.isfinite(emd.mll),
+                        "mll should be finite with exogenous input")
         # AIC should include G params
         expected_g_params = self.N * (self.N + 1) * d_u
         # dim_param from scalar Q + G params
         self.assertGreaterEqual(emd.dim_param, expected_g_params)
 
         end_cpu_time = time.process_time()
-        print('mllk=%.6f, iterations=%d, G norm=%.4f' %
-              (emd.mllk, emd.iterations, np.linalg.norm(emd.G)))
+        print('mll=%.6f, iterations=%d, G norm=%.4f' %
+              (emd.mll, emd.iterations, np.linalg.norm(emd.G)))
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
     def test_17_exogenous_zero_u(self):
@@ -710,10 +710,10 @@ class TestEstimator(unittest.TestCase):
         self.assertLess(diff, 1e-8,
                         "u=zeros should match u=None: diff=%.2e" % diff)
 
-        mllk_diff = abs(emd_none.mllk - emd_zero.mllk)
-        print('mllk diff: %.2e' % mllk_diff)
-        self.assertLess(mllk_diff, 1e-6,
-                        "mllk should match: diff=%.2e" % mllk_diff)
+        mll_diff = abs(emd_none.mll - emd_zero.mll)
+        print('mll diff: %.2e' % mll_diff)
+        self.assertLess(mll_diff, 1e-6,
+                        "mll should match: diff=%.2e" % mll_diff)
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
@@ -820,9 +820,9 @@ class TestEstimator(unittest.TestCase):
             print('%s: max diff=%.2e' % (name, diff))
             self.assertLess(diff, 1e-8, "%s mismatch: %.2e" % (name, diff))
 
-        mllk_diff = abs(emd_jax.mllk - emd_np.mllk)
-        print('mllk diff: %.2e' % mllk_diff)
-        self.assertLess(mllk_diff, 1e-6, "mllk mismatch: %.2e" % mllk_diff)
+        mll_diff = abs(emd_jax.mll - emd_np.mll)
+        print('mll diff: %.2e' % mll_diff)
+        self.assertLess(mll_diff, 1e-6, "mll mismatch: %.2e" % mll_diff)
 
         # G should also agree
         G_diff = np.max(np.abs(emd_jax.G - emd_np.G))

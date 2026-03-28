@@ -95,8 +95,8 @@ class EMData:
                 (shape: (T, N, N+1, N+1)).
 
             marg_llk (function): Function pointer to compute the marginal log likelihood.
-            mllk (float): Current marginal log likelihood (initialized to infinity).
-            mllk_list (list): List to store the marginal log likelihood values over iterations.
+            mll (float): Current marginal log likelihood (initialized to infinity).
+            mll_list (list): List to store the marginal log likelihood values over iterations.
             iterations_list (list): List to record iteration numbers.
             Q_list (list): List to store Q matrices (state covariance) over iterations.
             F_list (list): List to store F matrices over iterations.
@@ -180,8 +180,8 @@ class EMData:
 
         # Set the marginal log likelihood function.
         self.marg_llk = log_marginal
-        self.mllk = np.inf
-        self.mllk_list = []
+        self.mll = np.inf
+        self.mll_list = []
         self.iterations_list = []
         self.Q_list = []
         self.F_list = []

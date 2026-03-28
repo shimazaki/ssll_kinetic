@@ -30,7 +30,7 @@ spikes = synthesis.generate_spikes(T, R, N, THETA)
 emd = ssll_kinetic.run(spikes, max_iter=100)
 
 # Estimated parameters: emd.theta_s (shape: T, N, N+1)
-# Log marginal likelihood: emd.mllk
+# Log marginal likelihood: emd.mll
 ```
 
 ## The `state_cov` parameter

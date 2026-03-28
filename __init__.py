@@ -66,7 +66,7 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         container.EMData
             An EMData object containing:
               - The posterior parameter estimates (emd.theta_s).
-              - The log marginal likelihood for each iteration (emd.mllk_list).
+              - The log marginal likelihood for each iteration (emd.mll_list).
               - The sequence of state covariance matrices (emd.Q_list).
               - The total number of completed iterations (emd.iterations).
               - Timing information for the E-step, M-step, and log-likelihood calculations.
@@ -87,7 +87,7 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
 
     # Compute the initial marginal log likelihood
     lmc = emd.marg_llk(emd)
-    mllk = np.inf
+    mll = np.inf
 
     # Initialize iteration count
     emd.iterations = 0
@@ -113,8 +113,8 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         lmc = emd.marg_llk(emd)
         emd.llk_time = time.perf_counter() - t0
 
-        emd.mllk_list.append(lmc)
-        emd.mllk = lmc
+        emd.mll_list.append(lmc)
+        emd.mll = lmc
         emd.Q_list.append(emd.state_cov)
         emd.iterations_list.append(emd.iterations)
 
@@ -128,9 +128,9 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         emd.dim_param = emd.N * (emd.N + 1)
     if emd.G is not None and emd.T > 1:
         emd.dim_param += emd.N * (emd.N + 1) * emd.d_u
-    emd.aic = -2 * emd.mllk + 2 * emd.dim_param
+    emd.aic = -2 * emd.mll + 2 * emd.dim_param
     if EM_Info:
         print('Log marginal likelihood = %.6f (%d iterations)' %
-              (emd.mllk, emd.iterations))
+              (emd.mll, emd.iterations))
 
     return emd
