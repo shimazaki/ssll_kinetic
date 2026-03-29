@@ -34,7 +34,7 @@ from . import exp_max
 from .probability import log_marginal
 
 def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
-        EM_Info=True, u=None):
+        EM_Info=True, u=None, v=None):
     """
     Runs the Expectation-Maximization (EM) algorithm to fit the state-space kinetic Ising model
     to spike data.
@@ -81,9 +81,11 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         state_cov = 0
         if u is not None:
             u = u.mean(axis=0, keepdims=True)
+        if v is not None:
+            v = v.mean(axis=0, keepdims=True)
 
     # Initialize the EMData container with the given spike data
-    emd = container.EMData(spikes, state_cov=state_cov, u=u)
+    emd = container.EMData(spikes, state_cov=state_cov, u=u, v=v)
 
     # Compute the initial marginal log likelihood
     lmc = emd.marg_llk(emd)
@@ -126,8 +128,10 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
     # Compute AIC after finishing
     if stationary:
         emd.dim_param = emd.N * (emd.N + 1)
-    if emd.G is not None and emd.T > 1:
+    if emd.U is not None and emd.T > 1:
         emd.dim_param += emd.N * (emd.N + 1) * emd.d_u
+    if emd.V is not None:
+        emd.dim_param += emd.N * emd.d_v
     emd.aic = -2 * emd.mll + 2 * emd.dim_param
     if EM_Info:
         print('Log marginal likelihood = %.6f (%d iterations)' %

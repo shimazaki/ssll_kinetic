@@ -75,6 +75,36 @@ print(emd.aic)
 
 Internally, spikes `(T+1, R, N)` are reshaped to `(2, T*R, N)` and fitted with `state_cov=0` (Q fixed at zero), so the EM estimates a single pooled theta.
 
+## Exogenous input
+
+The model supports two types of exogenous input:
+
+**State input** `u` / `U`: Drives the state equation θ\_t = θ\_{t-1} + U·u\_t + ξ\_t. The gain matrix U is learned via a closed-form M-step.
+
+```python
+u = np.random.randn(T, d_u)  # (T, d_u) state input signal
+emd = ssll_kinetic.run(spikes, u=u)
+# emd.U: (N, N+1, d_u) learned state input gain
+```
+
+**Observation input** `v` / `V`: Directly offsets the firing probability in the observation model: r\_i = σ(θ\_{t,i}' f(x\_{t-1}) + V\_i' v\_t). V is learned via Newton-Raphson in the M-step.
+
+```python
+v = np.random.randn(T, d_v)  # (T, d_v) observation input signal
+emd = ssll_kinetic.run(spikes, v=v)
+# emd.V: (N, d_v) learned observation input gain
+```
+
+**Combined**: Both inputs can be used simultaneously.
+
+```python
+emd = ssll_kinetic.run(spikes, u=u, v=v)
+```
+
+**Shapes**: `u` is `(T, d_u)`, `v` is `(T, d_v)`. Results: `emd.U` is `(N, N+1, d_u)`, `emd.V` is `(N, d_v)`.
+
+**Identifiability note**: The observation input V·v\_t and the bias component of θ\_{t,i,0} can trade off. With sufficient temporal variation in v\_t and enough trials, both are identifiable. When v\_t = 0, the model reduces to the standard form.
+
 ## Entropy flow
 
 ```python

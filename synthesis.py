@@ -84,7 +84,7 @@ def _generate_thetas(T, D, mu=1.0, sigma=0.5, alpha=1.0):
     THETA = mu + np.dot(L, np.random.randn(T, D))
     return THETA
 
-def generate_spikes(T, R, N, THETA):
+def generate_spikes(T, R, N, THETA, V=None, v=None):
     """
     Generates spike data for T time bins, R trials, and N neurons using
     a state-space Ising-like model with given parameters THETA.
@@ -103,6 +103,10 @@ def generate_spikes(T, R, N, THETA):
         The parameter array of shape (T, N, N+1) used to generate spikes.
         - THETA[t, n, 0] is the field parameter for neuron n at time t.
         - THETA[t, n, 1..N] are the coupling parameters for neuron n at time t.
+    :param numpy.ndarray V:
+        Optional observation input gain of shape (N, d_v).
+    :param numpy.ndarray v:
+        Optional observation input of shape (T, d_v).
 
     :returns:
         numpy.ndarray
@@ -121,11 +125,19 @@ def generate_spikes(T, R, N, THETA):
         # F_psi: shape (R, 1+N) -> includes 1 for field, plus previous spikes for coupling
         F_psi = np.concatenate([np.ones((R, 1)), spikes[t - 1]], axis=1)
 
+        # logit: (N, R)
+        logit = THETA[t - 1] @ F_psi.T
+
+        # Add observation input offset
+        if V is not None and v is not None:
+            obs_offset = V @ v[t - 1]  # (N,)
+            logit = logit + obs_offset[:, np.newaxis]
+
         # psi[t-1] is the log-partition function for logistic regression
-        psi[t - 1] = np.log(1 + np.exp(THETA[t - 1] @ F_psi.T)).T
+        psi[t - 1] = np.log(1 + np.exp(logit)).T
 
         # p1 is the probability of spiking
-        p1 = np.exp(THETA[t - 1] @ F_psi.T - psi[t - 1].T).T
+        p1 = np.exp(logit - psi[t - 1].T).T
 
         # Compare p1 to random draws to decide spikes
         spikes[t] = (p1 >= rand_numbers[t]).astype(int)

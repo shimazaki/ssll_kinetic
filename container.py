@@ -28,7 +28,7 @@ import numpy as np
 from .probability import log_marginal
 
 class EMData:
-    def __init__(self, spikes, state_cov=0.5, u=None):
+    def __init__(self, spikes, state_cov=0.5, u=None, v=None):
         """
         Container class for storing and managing the results of the EM algorithm
         for the state-space kinetic Ising model. This class holds the spike data,
@@ -113,11 +113,21 @@ class EMData:
         if u is not None:
             self.u = u
             self.d_u = u.shape[1]
-            self.G = np.zeros((self.N, self.N + 1, self.d_u))
+            self.U = np.zeros((self.N, self.N + 1, self.d_u))
         else:
             self.u = None
             self.d_u = 0
-            self.G = None
+            self.U = None
+
+        # Observation input
+        if v is not None:
+            self.v = v              # (T, d_v)
+            self.d_v = v.shape[1]
+            self.V = np.zeros((self.N, self.d_v))
+        else:
+            self.v = None
+            self.d_v = 0
+            self.V = None
 
         self.dim_param = 0
         self.aic = 0
