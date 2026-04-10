@@ -1038,5 +1038,92 @@ class TestEstimator(unittest.TestCase):
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 
+    def test_25_stationary_workaround_state_cov_zero_v(self):
+        """Test state_cov=0 workaround for stationary model with time-varying v.
+
+        With state_cov=0, theta is constrained to be constant (no state noise)
+        while preserving per-time-step observation input v. This should recover
+        V better than stationary=True which time-averages v.
+        """
+        print("Test state_cov=0 workaround with time-varying v.")
+        start_cpu_time = time.process_time()
+
+        T, R, N = 50, 100, 2
+        d_v = 1
+        rng = np.random.RandomState(42)
+
+        # True V: (N, d_v)
+        V_true = rng.randn(N, d_v) * 0.5
+
+        # Sinusoidal observation input: (T, d_v)
+        t_axis = np.arange(T)
+        v = np.sin(2 * np.pi * t_axis / 25)[:, np.newaxis]  # (T, 1)
+
+        # Constant theta (stationary ground truth)
+        theta_const = np.array([[-2.0, 0.3, -0.2],
+                                [-1.8, -0.1, 0.25]])  # (N, N+1)
+        THETA = np.tile(theta_const, (T, 1, 1))  # (T, N, N+1)
+
+        # Generate spikes with V*v in observation model
+        rng2 = np.random.RandomState(7)
+        spikes = np.zeros((T + 1, R, N))
+        rand_numbers = rng2.rand(T + 1, R, N)
+        spikes[0] = (rand_numbers[0] >= 0.5).astype(int)
+        for t in range(1, T + 1):
+            F_psi = np.concatenate([np.ones((R, 1)), spikes[t - 1]], axis=1)
+            logit = THETA[t - 1] @ F_psi.T  # (N, R)
+            obs_offset = V_true @ v[t - 1]  # (N,)
+            logit = logit + obs_offset[:, np.newaxis]
+            prob = 1 / (1 + np.exp(-logit))  # (N, R)
+            spikes[t] = (prob.T >= rand_numbers[t]).astype(int)
+
+        # Run with state_cov=0 workaround
+        emd_workaround = ssll_kinetic.run(spikes, max_iter=500, state_cov=0,
+                                           v=v, EM_Info=False)
+
+        # 1. Theta should be approximately constant across time
+        theta_s = emd_workaround.theta_s  # (T, N, N+1)
+        theta_std = np.std(theta_s, axis=0)  # (N, N+1)
+        print('Theta std across time (max): %.6f' % theta_std.max())
+        self.assertLess(theta_std.max(), 0.1,
+            "Theta should be ~constant with state_cov=0 (max std=%.4f)" %
+            theta_std.max())
+
+        # 2. V recovery: correlation with true V
+        V_est = emd_workaround.V
+        corr_workaround = np.corrcoef(V_true.ravel(), V_est.ravel())[0, 1]
+        print('V recovery (workaround): corr=%.4f' % corr_workaround)
+        print('V_true:', np.round(V_true.ravel(), 3))
+        print('V_est :', np.round(V_est.ravel(), 3))
+        self.assertGreater(corr_workaround, 0.9,
+            "V recovery correlation should be > 0.9 (got %.4f)" %
+            corr_workaround)
+
+        # 3. EM converges, mll is finite
+        self.assertTrue(np.isfinite(emd_workaround.mll),
+                        "mll should be finite")
+        self.assertLess(emd_workaround.iterations, 500,
+                        "EM should converge within 500 iterations")
+
+        # 4. Compare against stationary=True (which time-averages v)
+        emd_stationary = ssll_kinetic.run(spikes, max_iter=500, stationary=True,
+                                           v=v, EM_Info=False)
+        V_stat = emd_stationary.V
+        corr_stationary = np.corrcoef(V_true.ravel(), V_stat.ravel())[0, 1]
+        # stationary=True time-averages a sinusoidal v to ~0, so V_stat may
+        # be all-zero → corrcoef returns nan. Treat nan as failed recovery.
+        if np.isnan(corr_stationary):
+            corr_stationary = 0.0
+        print('V recovery (stationary): corr=%.4f' % corr_stationary)
+        print('V_stat:', np.round(V_stat.ravel(), 3))
+        self.assertGreater(corr_workaround, corr_stationary,
+            "state_cov=0 workaround (corr=%.4f) should recover V better "
+            "than stationary=True (corr=%.4f)" %
+            (corr_workaround, corr_stationary))
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
 if __name__ == "__main__":
     unittest.main()
