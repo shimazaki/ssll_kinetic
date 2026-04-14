@@ -346,9 +346,136 @@ def compute_dissipation(a, m, m_p):
     return S_forward, S_reverse, net_flow
 
 
+def compute_entropy_flow_per_trial(emd):
+    """
+    Computes per-trial entropy flow from an EMData object after EM convergence.
+
+    When observation input v is trial-specific, each trial experiences a
+    different external drive, producing distinct mean-field trajectories and
+    entropy flows. When V is None, all trials are identical and a single
+    computation is broadcast to (T, R, N).
+
+    For stationary models (emd.T == 1), iterates the mean-field equation
+    to a fixed point per trial, then computes entropy flow at (theta_r, m*, m*).
+
+    Parameters
+    ----------
+    emd : container.EMData
+        EMData object with smoothed parameters (theta_s) and spike data.
+
+    Returns
+    -------
+    sf_bath : np.ndarray, shape (T, R, N)
+        Forward conditional entropy per trial per neuron per time step.
+    sr_bath : np.ndarray, shape (T, R, N)
+        Reverse conditional entropy per trial per neuron per time step.
+    s_bath : np.ndarray, shape (T, R, N)
+        Net entropy flow (dissipative) per trial per neuron per time step.
+    M : np.ndarray, shape (T, R, N)
+        Mean-field spike probabilities per trial per neuron per time step.
+    """
+    R = emd.R
+    mp = np.mean(emd.spikes, axis=(0, 1))
+
+    if emd.V is None:
+        # No observation input — all trials identical, compute once and broadcast
+        sf_1, sr_1, s_1, M_1 = _compute_entropy_flow_single(emd, mp)
+        # (T, N) -> (T, R, N)
+        sf_bath = np.broadcast_to(sf_1[:, np.newaxis, :], (emd.T, R, emd.N)).copy()
+        sr_bath = np.broadcast_to(sr_1[:, np.newaxis, :], (emd.T, R, emd.N)).copy()
+        s_bath = np.broadcast_to(s_1[:, np.newaxis, :], (emd.T, R, emd.N)).copy()
+        M = np.broadcast_to(M_1[:, np.newaxis, :], (emd.T, R, emd.N)).copy()
+        return sf_bath, sr_bath, s_bath, M
+
+    # Per-trial computation with trial-specific observation input
+    sf_bath = np.zeros((emd.T, R, emd.N))
+    sr_bath = np.zeros((emd.T, R, emd.N))
+    s_bath = np.zeros((emd.T, R, emd.N))
+    M = np.zeros((emd.T, R, emd.N))
+
+    if emd.T == 1:
+        # Stationary case: iterate mean-field to fixed point per trial
+        for r in range(R):
+            theta_r = emd.theta_s[0].copy()
+            theta_r[:, 0] = theta_r[:, 0] + emd.V @ emd.v[0, r]
+            m = mp.copy()
+            for _ in range(1000):
+                m_prev = m.copy()
+                m = compute_mean_field(theta_r, m)
+                if np.max(np.abs(m - m_prev)) < 1e-8:
+                    break
+            sf, sr, s_net = compute_dissipation(theta_r, m, m)
+            sf_bath[0, r, :] = sf
+            sr_bath[0, r, :] = sr
+            s_bath[0, r, :] = s_net
+            M[0, r] = m
+    else:
+        # Non-stationary case: forward pass per trial
+        for r in range(R):
+            m_p = mp.copy()
+            for t in range(emd.T):
+                theta_tr = emd.theta_s[t].copy()
+                theta_tr[:, 0] = theta_tr[:, 0] + emd.V @ emd.v[t, r]
+                m = compute_mean_field(theta_tr, m_p)
+                sf, sr, s_net = compute_dissipation(theta_tr, m, m_p)
+                sf_bath[t, r, :] = sf
+                sr_bath[t, r, :] = sr
+                s_bath[t, r, :] = s_net
+                M[t, r] = m
+                m_p = m
+
+    return sf_bath, sr_bath, s_bath, M
+
+
+def _compute_entropy_flow_single(emd, mp):
+    """
+    Compute entropy flow for a single trajectory (no observation input or
+    trial-averaged). Returns (T, N) arrays.
+    """
+    M = np.zeros((emd.T, emd.N))
+    sf_bath = np.zeros((emd.T, emd.N))
+    sr_bath = np.zeros((emd.T, emd.N))
+    s_bath = np.zeros((emd.T, emd.N))
+
+    if emd.T == 1:
+        theta = emd.theta_s[0].copy()
+        if emd.V is not None:
+            theta[:, 0] = theta[:, 0] + emd.V @ emd.v[0].mean(axis=0)
+        m = mp.copy()
+        for _ in range(1000):
+            m_prev = m.copy()
+            m = compute_mean_field(theta, m)
+            if np.max(np.abs(m - m_prev)) < 1e-8:
+                break
+        sf, sr, s_net = compute_dissipation(theta, m, m)
+        sf_bath[0, :] = sf
+        sr_bath[0, :] = sr
+        s_bath[0, :] = s_net
+        M[0] = m
+    else:
+        for t in range(emd.T):
+            m_p = mp if t == 0 else m
+            THETA_st = emd.theta_s[t].copy()
+            if emd.V is not None:
+                THETA_st[:, 0] = THETA_st[:, 0] + emd.V @ emd.v[t].mean(axis=0)
+            m = compute_mean_field(THETA_st, m_p)
+            sf_t, sr_t, s_t = compute_dissipation(THETA_st, m, m_p)
+            sf_bath[t, :] = sf_t
+            sr_bath[t, :] = sr_t
+            s_bath[t, :] = s_t
+            M[t] = m
+
+    return sf_bath, sr_bath, s_bath, M
+
+
 def compute_entropy_flow(emd):
     """
-    Computes entropy flow time series from an EMData object after EM convergence.
+    Computes trial-averaged entropy flow time series from an EMData object
+    after EM convergence.
+
+    Calls compute_entropy_flow_per_trial and averages over the trial (R)
+    dimension. When there is no observation input, this is equivalent to the
+    single-trajectory computation.
 
     For stationary models (emd.T == 1), iterates the mean-field equation
     m = f(theta, m) from the empirical spike mean to the fixed point m*,
@@ -370,40 +497,10 @@ def compute_entropy_flow(emd):
     M : np.ndarray, shape (T, N)
         Mean-field spike probabilities per neuron per time step.
     """
-    M = np.zeros((emd.T, emd.N))
-    s_bath = np.zeros((emd.T, emd.N))
-    sf_bath = np.zeros((emd.T, emd.N))
-    sr_bath = np.zeros((emd.T, emd.N))
-    mp = np.mean(emd.spikes, axis=(0, 1))
+    if emd.V is None:
+        # No observation input — skip per-trial overhead
+        mp = np.mean(emd.spikes, axis=(0, 1))
+        return _compute_entropy_flow_single(emd, mp)
 
-    if emd.T == 1:
-        # Stationary case: iterate mean-field to fixed point m*
-        theta = emd.theta_s[0].copy()
-        if emd.V is not None:
-            theta[:, 0] = theta[:, 0] + emd.V @ emd.v[0].mean(axis=0)
-        m = mp.copy()
-        for _ in range(1000):
-            m_prev = m.copy()
-            m = compute_mean_field(theta, m)
-            if np.max(np.abs(m - m_prev)) < 1e-8:
-                break
-        # At stationarity, m_p = m = m*
-        sf, sr, s_net = compute_dissipation(theta, m, m)
-        sf_bath[0, :] = sf
-        sr_bath[0, :] = sr
-        s_bath[0, :] = s_net
-        M[0] = m
-    else:
-        for t in range(emd.T):
-            m_p = mp if t == 0 else m
-            THETA_st = emd.theta_s[t].copy()
-            if emd.V is not None:
-                THETA_st[:, 0] = THETA_st[:, 0] + emd.V @ emd.v[t].mean(axis=0)
-            m = compute_mean_field(THETA_st, m_p)
-            sf_bath_t, sr_bath_t, s_bath_t = compute_dissipation(THETA_st, m, m_p)
-            sf_bath[t, :] = sf_bath_t
-            sr_bath[t, :] = sr_bath_t
-            s_bath[t, :] = s_bath_t
-            M[t] = m
-
-    return sf_bath, sr_bath, s_bath, M
+    sf, sr, s_net, M = compute_entropy_flow_per_trial(emd)
+    return sf.mean(axis=1), sr.mean(axis=1), s_net.mean(axis=1), M.mean(axis=1)

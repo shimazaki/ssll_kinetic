@@ -1193,5 +1193,102 @@ class TestEstimator(unittest.TestCase):
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 
+    def test_27_per_trial_entropy_flow(self):
+        """Test per-trial entropy flow: shape, mean matches compute_entropy_flow."""
+        print("Test Per-Trial Entropy Flow (T=%d, R=%d, N=%d)." %
+              (self.T, self.R, self.N))
+        start_cpu_time = time.process_time()
+
+        THETA, spikes = generate_test_data(self.T, self.R, self.N)
+        emd = run_em_with_q_method(spikes, q_method='diagonal')
+
+        # Per-trial (no V, so all trials identical)
+        sf_pt, sr_pt, s_pt, M_pt = entropy_flow.compute_entropy_flow_per_trial(emd)
+        self.assertEqual(sf_pt.shape, (self.T, self.R, self.N))
+        self.assertEqual(sr_pt.shape, (self.T, self.R, self.N))
+        self.assertEqual(s_pt.shape, (self.T, self.R, self.N))
+        self.assertEqual(M_pt.shape, (self.T, self.R, self.N))
+
+        # Trial-averaged should match compute_entropy_flow
+        sf, sr, s_net, M = entropy_flow.compute_entropy_flow(emd)
+        self.assertTrue(np.allclose(sf_pt.mean(axis=1), sf),
+                        "Per-trial mean should match compute_entropy_flow (sf)")
+        self.assertTrue(np.allclose(sr_pt.mean(axis=1), sr),
+                        "Per-trial mean should match compute_entropy_flow (sr)")
+        self.assertTrue(np.allclose(s_pt.mean(axis=1), s_net),
+                        "Per-trial mean should match compute_entropy_flow (s_net)")
+        self.assertTrue(np.allclose(M_pt.mean(axis=1), M),
+                        "Per-trial mean should match compute_entropy_flow (M)")
+
+        # No V => all trials identical
+        self.assertTrue(np.allclose(sf_pt[:, 0, :], sf_pt[:, 1, :]),
+                        "Without V, all trials should be identical")
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
+    def test_28_per_trial_entropy_flow_with_v(self):
+        """Test per-trial entropy flow with trial-specific v produces cross-trial variation."""
+        print("Test Per-Trial Entropy Flow with Trial-Specific v.")
+        start_cpu_time = time.process_time()
+
+        T, R, N = 20, 10, 2
+        d_v = 2
+        rng = np.random.RandomState(42)
+
+        # Constant theta + V
+        theta_const = np.array([[-1.5, 0.3, -0.2],
+                                [-1.2, -0.1, 0.25]])
+        THETA = np.tile(theta_const, (T, 1, 1))
+
+        V_true = rng.randn(N, d_v) * 0.5
+        v_3d = rng.randn(T, R, d_v) * 0.5
+
+        # Generate spikes with trial-specific v
+        rng2 = np.random.RandomState(7)
+        spikes = np.zeros((T + 1, R, N))
+        rand_numbers = rng2.rand(T + 1, R, N)
+        spikes[0] = (rand_numbers[0] >= 0.5).astype(int)
+        for t in range(1, T + 1):
+            F_psi = np.concatenate([np.ones((R, 1)), spikes[t - 1]], axis=1)
+            logit = THETA[t - 1] @ F_psi.T
+            obs_offset = v_3d[t - 1] @ V_true.T
+            logit = logit + obs_offset.T
+            prob = 1 / (1 + np.exp(-logit))
+            spikes[t] = (prob.T >= rand_numbers[t]).astype(int)
+
+        emd = ssll_kinetic.run(spikes, max_iter=200, state_cov=0,
+                                v=v_3d, EM_Info=False)
+
+        # Per-trial entropy flow
+        sf_pt, sr_pt, s_pt, M_pt = entropy_flow.compute_entropy_flow_per_trial(emd)
+        self.assertEqual(sf_pt.shape, (T, R, N))
+
+        # With trial-specific v, trials should differ
+        trial_var = np.var(s_pt, axis=1)  # (T, N)
+        self.assertTrue(np.any(trial_var > 1e-10),
+                        "Per-trial entropy flows should vary across trials "
+                        "when v is trial-specific")
+
+        # Trial-averaged per-trial should match compute_entropy_flow
+        sf, sr, s_net, M = entropy_flow.compute_entropy_flow(emd)
+        self.assertTrue(np.allclose(sf_pt.mean(axis=1), sf, atol=1e-10),
+                        "Per-trial mean should match compute_entropy_flow (sf)")
+        self.assertTrue(np.allclose(M_pt.mean(axis=1), M, atol=1e-10),
+                        "Per-trial mean should match compute_entropy_flow (M)")
+
+        # Net flow identity per trial
+        self.assertTrue(np.allclose(s_pt, -(sf_pt - sr_pt)),
+                        "Net entropy flow identity should hold per trial")
+
+        # Forward entropy non-negative
+        self.assertTrue(np.all(sf_pt >= 0),
+                        "Forward conditional entropy should be non-negative")
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
 if __name__ == "__main__":
     unittest.main()

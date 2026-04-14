@@ -38,11 +38,12 @@ Single-level Python package (`ssll_kinetic/`) with no subpackages:
 - **`probability.py`** — `log_marginal()`: with JAX, entire computation (slogdet, quadratic, PSI) runs in a single JIT kernel via `_log_marginal_jax`; numpy fallback uses vectorized `np.linalg.slogdet` and `np.matmul`
 - **`synthesis.py`** — Data generation: `generate_thetas`, `generate_thetas_fixed_seed`, `generate_spikes` (spike sampling), `shuffle_spikes`
 - **`entropy_flow.py`** — Entropy flow computation from estimated parameters (theta_s):
-  - `compute_entropy_flow(emd)` — main entry: returns forward/reverse/net entropy flow time series + mean-field spike probabilities
+  - `compute_entropy_flow(emd)` — main entry: returns trial-averaged forward/reverse/net entropy flow `(T, N)` + mean-field spike probabilities
+  - `compute_entropy_flow_per_trial(emd)` — per-trial entropy flow `(T, R, N)`; when V is None, broadcasts single result
   - `compute_dissipation(a, m, m_p)` — per-time-step forward/reverse/net entropy flow per neuron
   - `compute_mean_field(a, m_p)` — mean-field spike probability update
   - Two equivalent formulations: chi-based (`update_S`, `update_S_re`) and h-psi decomposition (`update_S_alt`, `update_S_re_alt`); see Eqs. 47-48, 57-58 in the paper
-- **`testing.py`** — 27 unit tests covering EM, entropy flow, parameter recovery, formulation equivalence, stationary analysis, JAX/numpy parity, JAX scan/numpy parity, exogenous state input (U/u), observation input (V/v), and trial-specific observation input
+- **`testing.py`** — 29 unit tests covering EM, entropy flow, parameter recovery, formulation equivalence, stationary analysis, JAX/numpy parity, JAX scan/numpy parity, exogenous state input (U/u), observation input (V/v), trial-specific observation input, and per-trial entropy flow
 
 ## Important: spike array dtype
 

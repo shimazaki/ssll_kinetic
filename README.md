@@ -127,7 +127,17 @@ sf_bath, sr_bath, s_bath, M = entropy_flow.compute_entropy_flow(emd)
 # M:       mean-field spike probabilities, shape (T, N)
 ```
 
-For stationary models (`emd.T == 1` after pooling with `stationary=True`), `compute_entropy_flow` automatically iterates the mean-field equation m = f(theta, m) from the empirical spike mean to the fixed point m\*, then computes entropy flow at (theta, m\*, m\*). The returned arrays have shape `(1, N)`.
+**Per-trial entropy flow**: When observation input `v` is trial-specific, each trial experiences a different external drive, producing distinct mean-field trajectories and entropy flows. Use `compute_entropy_flow_per_trial` to get per-trial results:
+
+```python
+sf, sr, s_net, M = entropy_flow.compute_entropy_flow_per_trial(emd)
+# All arrays have shape (T, R, N) — one trajectory per trial
+# Trial-averaged result: sf.mean(axis=1) matches compute_entropy_flow output
+```
+
+When `V` is None (no observation input), all trials are identical and `compute_entropy_flow_per_trial` broadcasts the single result to `(T, R, N)`. `compute_entropy_flow` calls the per-trial version internally and averages over R.
+
+For stationary models (`emd.T == 1` after pooling with `stationary=True`), both functions automatically iterate the mean-field equation m = f(theta, m) from the empirical spike mean to the fixed point m\*, then compute entropy flow at (theta, m\*, m\*). The returned arrays have shape `(1, N)` or `(1, R, N)`.
 
 ```python
 emd = ssll_kinetic.run(spikes, max_iter=100, stationary=True)
