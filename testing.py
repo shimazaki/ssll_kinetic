@@ -1038,14 +1038,14 @@ class TestEstimator(unittest.TestCase):
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 
-    def test_25_stationary_workaround_state_cov_zero_v(self):
-        """Test state_cov=0 workaround for stationary model with time-varying v.
+    def test_25_stationary_v_pooling(self):
+        """Test stationary=True preserves time-varying v through trial pooling.
 
-        With state_cov=0, theta is constrained to be constant (no state noise)
-        while preserving per-time-step observation input v. This should recover
-        V better than stationary=True which time-averages v.
+        With stationary=True, v is reshaped from (T, R, d_v) to (1, T*R, d_v)
+        matching the pooled spikes. This preserves the observation input and
+        makes V identifiable. Also verifies state_cov=0 as an alternative.
         """
-        print("Test state_cov=0 workaround with time-varying v.")
+        print("Test stationary=True with v pooling.")
         start_cpu_time = time.process_time()
 
         T, R, N = 50, 100, 2
@@ -1077,49 +1077,34 @@ class TestEstimator(unittest.TestCase):
             prob = 1 / (1 + np.exp(-logit))  # (N, R)
             spikes[t] = (prob.T >= rand_numbers[t]).astype(int)
 
-        # Run with state_cov=0 workaround
-        emd_workaround = ssll_kinetic.run(spikes, max_iter=500, state_cov=0,
-                                           v=v, EM_Info=False)
-
-        # 1. Theta should be approximately constant across time
-        theta_s = emd_workaround.theta_s  # (T, N, N+1)
-        theta_std = np.std(theta_s, axis=0)  # (N, N+1)
-        print('Theta std across time (max): %.6f' % theta_std.max())
-        self.assertLess(theta_std.max(), 0.1,
-            "Theta should be ~constant with state_cov=0 (max std=%.4f)" %
-            theta_std.max())
-
-        # 2. V recovery: correlation with true V
-        V_est = emd_workaround.V
-        corr_workaround = np.corrcoef(V_true.ravel(), V_est.ravel())[0, 1]
-        print('V recovery (workaround): corr=%.4f' % corr_workaround)
-        print('V_true:', np.round(V_true.ravel(), 3))
-        print('V_est :', np.round(V_est.ravel(), 3))
-        self.assertGreater(corr_workaround, 0.9,
-            "V recovery correlation should be > 0.9 (got %.4f)" %
-            corr_workaround)
-
-        # 3. EM converges, mll is finite
-        self.assertTrue(np.isfinite(emd_workaround.mll),
-                        "mll should be finite")
-        self.assertLess(emd_workaround.iterations, 500,
-                        "EM should converge within 500 iterations")
-
-        # 4. Compare against stationary=True (which time-averages v)
+        # 1. Run with stationary=True (v is now preserved via pooling)
         emd_stationary = ssll_kinetic.run(spikes, max_iter=500, stationary=True,
                                            v=v, EM_Info=False)
         V_stat = emd_stationary.V
         corr_stationary = np.corrcoef(V_true.ravel(), V_stat.ravel())[0, 1]
-        # stationary=True time-averages a sinusoidal v to ~0, so V_stat may
-        # be all-zero → corrcoef returns nan. Treat nan as failed recovery.
         if np.isnan(corr_stationary):
             corr_stationary = 0.0
         print('V recovery (stationary): corr=%.4f' % corr_stationary)
+        print('V_true:', np.round(V_true.ravel(), 3))
         print('V_stat:', np.round(V_stat.ravel(), 3))
-        self.assertGreater(corr_workaround, corr_stationary,
-            "state_cov=0 workaround (corr=%.4f) should recover V better "
-            "than stationary=True (corr=%.4f)" %
-            (corr_workaround, corr_stationary))
+        self.assertGreater(corr_stationary, 0.9,
+            "stationary=True should recover V (corr=%.4f)" % corr_stationary)
+
+        # 2. EM converges, mll is finite
+        self.assertTrue(np.isfinite(emd_stationary.mll),
+                        "mll should be finite")
+        self.assertLess(emd_stationary.iterations, 500,
+                        "EM should converge within 500 iterations")
+
+        # 3. Run with state_cov=0 alternative
+        emd_workaround = ssll_kinetic.run(spikes, max_iter=500, state_cov=0,
+                                           v=v, EM_Info=False)
+        V_est = emd_workaround.V
+        corr_workaround = np.corrcoef(V_true.ravel(), V_est.ravel())[0, 1]
+        print('V recovery (state_cov=0): corr=%.4f' % corr_workaround)
+        print('V_est :', np.round(V_est.ravel(), 3))
+        self.assertGreater(corr_workaround, 0.9,
+            "state_cov=0 should also recover V (corr=%.4f)" % corr_workaround)
 
         end_cpu_time = time.process_time()
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))

@@ -59,13 +59,13 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         observations into a single time step. Spikes (T+1, R, N) are reshaped
         to (2, T*R, N) and state_cov is forced to 0. Default is False.
 
-        .. note:: When ``stationary=True`` with exogenous input ``u`` or ``v``,
-           the input is time-averaged into a single vector, losing temporal
-           variation. To fit a stationary model that preserves time-varying
-           input (e.g., stimulus history), use ``state_cov=0`` instead:
-           this keeps all T time steps with their per-step input while
-           constraining theta to be constant (zero state noise).
-           Example: ``emd = ssll_kinetic.run(spikes, state_cov=0, v=v)``
+        Observation input ``v`` is preserved through pooling: it is reshaped
+        from (T, R, d_v) to (1, T*R, d_v) so each pooled trial keeps its
+        own observation input vector, making V identifiable.
+
+        .. note:: When ``stationary=True`` with state input ``u``, the input
+           is time-averaged into a single vector. U is not identifiable with
+           T=1 (the state transition is eliminated by pooling).
     :param bool EM_Info:
         If True, display a tqdm progress bar during EM iterations and print
         final results. Default is True.
@@ -80,10 +80,11 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         applies the same input to all trials; shape (T, R, d_v) allows
         trial-specific covariates. Default is None.
 
-        .. note:: With ``stationary=True``, ``v`` is time-averaged into a
-           constant offset indistinguishable from the bias. To retain
-           per-time-step observation input while fitting stationary parameters,
-           use ``state_cov=0`` instead of ``stationary=True``.
+        .. note:: With ``stationary=True``, ``v`` is reshaped from
+           ``(T, R, d_v)`` to ``(1, T*R, d_v)`` to match the pooled spikes,
+           preserving per-observation input. Alternatively, ``state_cov=0``
+           can be used to fit stationary parameters while keeping all T
+           time steps.
 
     :returns:
         container.EMData
@@ -110,20 +111,13 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
                 stacklevel=2)
             u = u.mean(axis=0, keepdims=True)
         if v is not None:
-            import warnings
-            warnings.warn(
-                "stationary=True with v: averaging v over time (and trials, "
-                "if trial-dependent). V acts as a constant offset "
-                "indistinguishable from bias.",
-                stacklevel=2)
             v = np.asarray(v)
             if v.ndim == 2:
-                # (T, d_v) → broadcast then average
-                v = v.mean(axis=0, keepdims=True)  # (1, d_v)
-            else:
-                # (T, R, d_v) → average over time and trials
-                v = v.mean(axis=(0, 1), keepdims=False)  # (d_v,)
-                v = v[np.newaxis, :]  # (1, d_v)
+                # (T, d_v) → broadcast to (T, R, d_v)
+                v = np.broadcast_to(v[:, np.newaxis, :],
+                                    (T, R, v.shape[1])).copy()
+            # (T, R, d_v) → (1, T*R, d_v) matching pooled spikes
+            v = v.reshape(1, T * R, v.shape[-1])
 
     # Initialize the EMData container with the given spike data
     emd = container.EMData(spikes, state_cov=state_cov, u=u, v=v)
