@@ -44,38 +44,6 @@ try:
         G = jnp.einsum('rn,ri,rj->nij', w, F1, F1)  # (N, N+1, N+1)
         return eta, G
 
-    def _nr_loop_jax(theta_f, F1, FSUM, sigma_o_i, theta_o, R,
-                     ga_convergence, max_ga_iterations):
-        """Full Newton-Raphson loop on device via jax.lax.while_loop."""
-        N, Np1 = theta_f.shape
-
-        def _cond(state):
-            theta, sigma_f, max_dlpo, iterations = state
-            return (max_dlpo > ga_convergence) & (iterations < max_ga_iterations)
-
-        def _body(state):
-            theta, _, _, iterations = state
-            eta, G = _compute_eta_G_jax(theta, F1)
-            diff = theta - theta_o
-            dlpo = eta - FSUM + jnp.matmul(
-                sigma_o_i, diff[..., jnp.newaxis]
-            ).squeeze(-1)
-            ddlpo = G + sigma_o_i
-            ddlpo_i = jnp.linalg.inv(ddlpo)
-            theta = theta - jnp.matmul(
-                ddlpo_i, dlpo[..., jnp.newaxis]
-            ).squeeze(-1)
-            max_dlpo = jnp.amax(jnp.absolute(dlpo)) / R
-            return theta, ddlpo_i, max_dlpo, iterations + 1
-
-        init_sigma = jnp.zeros((N, Np1, Np1))
-        init_state = (theta_f, init_sigma, jnp.inf, 0)
-        theta_final, sigma_f, _, iterations = jax.lax.while_loop(
-            _cond, _body, init_state)
-        return theta_final, sigma_f, iterations
-
-    _nr_loop_jax = jax.jit(_nr_loop_jax, static_argnums=(5,))
-
     def _e_step_filter_jax_fn(spikes_T, FSUM, init_theta, init_cov, state_cov,
                                theta_f_init, U_input, u_input,
                                V_input, v_input, R,

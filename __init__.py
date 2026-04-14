@@ -112,8 +112,9 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         if v is not None:
             import warnings
             warnings.warn(
-                "stationary=True with v: time-averaging v over T steps. "
-                "V acts as a constant offset indistinguishable from bias.",
+                "stationary=True with v: averaging v over time (and trials, "
+                "if trial-dependent). V acts as a constant offset "
+                "indistinguishable from bias.",
                 stacklevel=2)
             v = np.asarray(v)
             if v.ndim == 2:

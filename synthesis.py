@@ -106,7 +106,9 @@ def generate_spikes(T, R, N, THETA, V=None, v=None):
     :param numpy.ndarray V:
         Optional observation input gain of shape (N, d_v).
     :param numpy.ndarray v:
-        Optional observation input of shape (T, d_v).
+        Optional observation input of shape (T, d_v) or (T, R, d_v).
+        Shape (T, d_v) applies the same input to all trials; shape
+        (T, R, d_v) allows trial-specific covariates.
 
     :returns:
         numpy.ndarray
@@ -130,8 +132,13 @@ def generate_spikes(T, R, N, THETA, V=None, v=None):
 
         # Add observation input offset
         if V is not None and v is not None:
-            obs_offset = V @ v[t - 1]  # (N,)
-            logit = logit + obs_offset[:, np.newaxis]
+            v_t = v[t - 1]  # (d_v,) or (R, d_v)
+            if v_t.ndim == 1:
+                obs_offset = V @ v_t              # (N,)
+                logit = logit + obs_offset[:, np.newaxis]
+            else:
+                obs_offset = v_t @ V.T             # (R, N)
+                logit = logit + obs_offset.T       # (N, R)
 
         # psi[t-1] is the log-partition function for logistic regression
         psi[t - 1] = np.log(1 + np.exp(logit)).T
