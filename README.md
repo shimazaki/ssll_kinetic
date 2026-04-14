@@ -75,6 +75,14 @@ print(emd.aic)
 
 Internally, spikes `(T+1, R, N)` are reshaped to `(2, T*R, N)` and fitted with `state_cov=0` (Q fixed at zero), so the EM estimates a single pooled theta.
 
+**Limitation with exogenous input**: When `stationary=True`, any exogenous input `u` or `v` is time-averaged into a single vector, losing temporal variation. To fit a stationary model with time-varying observation input (e.g., stimulus history), use `state_cov=0` instead: this keeps all T time steps with their per-step `v_t` while constraining theta to be constant (zero state noise).
+
+```python
+# Stationary model with time-varying observation input
+# Use state_cov=0 instead of stationary=True
+emd = ssll_kinetic.run(spikes, state_cov=0, v=v)
+```
+
 ## Exogenous input
 
 The model supports two types of exogenous input:

@@ -58,9 +58,30 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         If True, fit a time-independent model by pooling all T*R transition
         observations into a single time step. Spikes (T+1, R, N) are reshaped
         to (2, T*R, N) and state_cov is forced to 0. Default is False.
+
+        .. note:: When ``stationary=True`` with exogenous input ``u`` or ``v``,
+           the input is time-averaged into a single vector, losing temporal
+           variation. To fit a stationary model that preserves time-varying
+           input (e.g., stimulus history), use ``state_cov=0`` instead:
+           this keeps all T time steps with their per-step input while
+           constraining theta to be constant (zero state noise).
+           Example: ``emd = ssll_kinetic.run(spikes, state_cov=0, v=v)``
     :param bool EM_Info:
         If True, display a tqdm progress bar during EM iterations and print
         final results. Default is True.
+    :param numpy.ndarray u:
+        State input array of shape (T, d_u). When provided, the state equation
+        becomes theta_t = theta_{t-1} + U·u_t + xi_t and U is learned via the
+        M-step. Default is None.
+    :param numpy.ndarray v:
+        Observation input array of shape (T, d_v). When provided, the firing
+        rate includes an additive offset V·v_t and V is learned via
+        Newton-Raphson in the M-step. Default is None.
+
+        .. note:: With ``stationary=True``, ``v`` is time-averaged into a
+           constant offset indistinguishable from the bias. To retain
+           per-time-step observation input while fitting stationary parameters,
+           use ``state_cov=0`` instead of ``stationary=True``.
 
     :returns:
         container.EMData
@@ -80,8 +101,18 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         spikes = np.stack([from_states, to_states])  # (2, T*R, N)
         state_cov = 0
         if u is not None:
+            import warnings
+            warnings.warn(
+                "stationary=True with u: time-averaging u over T steps. "
+                "U is not identifiable with T=1; it will remain at zero.",
+                stacklevel=2)
             u = u.mean(axis=0, keepdims=True)
         if v is not None:
+            import warnings
+            warnings.warn(
+                "stationary=True with v: time-averaging v over T steps. "
+                "V acts as a constant offset indistinguishable from bias.",
+                stacklevel=2)
             v = v.mean(axis=0, keepdims=True)
 
     # Initialize the EMData container with the given spike data
