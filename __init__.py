@@ -74,9 +74,11 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
         becomes theta_t = theta_{t-1} + U·u_t + xi_t and U is learned via the
         M-step. Default is None.
     :param numpy.ndarray v:
-        Observation input array of shape (T, d_v). When provided, the firing
-        rate includes an additive offset V·v_t and V is learned via
-        Newton-Raphson in the M-step. Default is None.
+        Observation input array of shape (T, d_v) or (T, R, d_v). When
+        provided, the firing rate includes an additive offset V·v_t^{(r)}
+        and V is learned via Newton-Raphson in the M-step. Shape (T, d_v)
+        applies the same input to all trials; shape (T, R, d_v) allows
+        trial-specific covariates. Default is None.
 
         .. note:: With ``stationary=True``, ``v`` is time-averaged into a
            constant offset indistinguishable from the bias. To retain
@@ -113,7 +115,14 @@ def run(spikes, max_iter=100, mstep=True, state_cov=0.5, stationary=False,
                 "stationary=True with v: time-averaging v over T steps. "
                 "V acts as a constant offset indistinguishable from bias.",
                 stacklevel=2)
-            v = v.mean(axis=0, keepdims=True)
+            v = np.asarray(v)
+            if v.ndim == 2:
+                # (T, d_v) → broadcast then average
+                v = v.mean(axis=0, keepdims=True)  # (1, d_v)
+            else:
+                # (T, R, d_v) → average over time and trials
+                v = v.mean(axis=(0, 1), keepdims=False)  # (d_v,)
+                v = v[np.newaxis, :]  # (1, d_v)
 
     # Initialize the EMData container with the given spike data
     emd = container.EMData(spikes, state_cov=state_cov, u=u, v=v)

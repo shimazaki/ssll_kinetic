@@ -37,7 +37,7 @@ try:
     def _compute_eta_G_jax(theta, F1, offset=None):
         logit = F1 @ theta.T                         # (R, N)
         if offset is not None:
-            logit = logit + offset[jnp.newaxis, :]
+            logit = logit + offset
         r = jax.nn.sigmoid(logit)                    # (R, N)
         eta = r.T @ F1                               # (N, N+1)
         w = r * (1 - r)                              # (R, N)
@@ -87,7 +87,7 @@ try:
         U_input: (N, N+1, d_u) exogenous input gain matrix (zeros when no input).
         u_input: (T, d_u) exogenous input (u[0] zeroed out for t=0 trick).
         V_input: (N, d_v) observation input gain (zeros when no input).
-        v_input: (T, d_v) observation input (zeros when no input).
+        v_input: (T, R, d_v) observation input (zeros when no input).
         """
         N = init_theta.shape[0]
         Np1 = init_theta.shape[1]
@@ -107,11 +107,8 @@ try:
             sigma_o = sigma_f_prev + state_cov
             sigma_o_i = jnp.linalg.inv(sigma_o)
 
-            # Observation input offset: V @ v_t -> (N,)
-            obs_offset = V_input @ v_t  # (N,)
-
-            # Adjusted FSUM: add obs_offset * spike_count to first column
-            FSUM_adj = FSUM_t.at[:, 0].add(obs_offset)
+            # Observation input offset: v_t (R, d_v) @ V.T -> (R, N)
+            obs_offset = v_t @ V_input.T  # (R, N)
 
             # Newton-Raphson via while_loop
             def _cond(state):
@@ -121,14 +118,14 @@ try:
             def _body(state):
                 theta, _, _, iterations = state
                 # logit includes obs offset
-                logit = F1_t @ theta.T + obs_offset[jnp.newaxis, :]  # (R, N)
+                logit = F1_t @ theta.T + obs_offset  # (R, N)
                 r = jax.nn.sigmoid(logit)
                 eta = r.T @ F1_t
                 w = r * (1 - r)
                 G = jnp.einsum('rn,ri,rj->nij', w, F1_t, F1_t)
 
                 diff = theta - theta_o
-                dlpo = eta - FSUM_adj + jnp.matmul(
+                dlpo = eta - FSUM_t + jnp.matmul(
                     sigma_o_i, diff[..., jnp.newaxis]).squeeze(-1)
                 ddlpo = G + sigma_o_i
                 ddlpo_i = jnp.linalg.inv(ddlpo)
@@ -261,17 +258,17 @@ def m_step_V(emd):
             grad = np.zeros(emd.d_v)
             hess = np.zeros((emd.d_v, emd.d_v))
             for t in range(emd.T):
-                # Linear predictor: theta_s[t,i] @ f(x_{t-1}^{(r)}) + V_i @ v_t
+                # Linear predictor: theta_s[t,i] @ f(x_{t-1}^{(r)}) + V_i @ v[t,r]
                 F1 = np.empty((emd.R, emd.N + 1))
                 F1[:, 0] = 1.0
                 F1[:, 1:] = emd.spikes[t]
-                lp = F1 @ emd.theta_s[t, i] + emd.V[i] @ emd.v[t]  # (R,)
+                lp = F1 @ emd.theta_s[t, i] + emd.v[t] @ emd.V[i]  # (R,)
                 r = 1 / (1 + np.exp(-lp))  # (R,)
-                n_ti = emd.FSUM[t, i, 0]  # spike count across trials
-                grad += (n_ti - r.sum()) * emd.v[t]
-                w_sum = (r * (1 - r)).sum()
-                grad_outer = np.outer(emd.v[t], emd.v[t])
-                hess -= w_sum * grad_outer
+                # Per-trial gradient: sum_r (x_{t,i,r} - r_r) * v[t,r]
+                x_ti = emd.spikes[t + 1, :, i]  # (R,)
+                grad += (x_ti - r) @ emd.v[t]  # (R,) @ (R, d_v) -> (d_v,)
+                w = r * (1 - r)  # (R,)
+                hess -= emd.v[t].T @ (emd.v[t] * w[:, np.newaxis])  # (d_v, d_v)
             # Newton-Raphson update
             if np.max(np.abs(grad)) < tol:
                 break
@@ -438,7 +435,7 @@ def compute_eta_G(theta, F1, offset=None):
     :param numpy.ndarray F1:
         Feature matrix of shape (R, N+1), with leading ones column.
     :param numpy.ndarray offset:
-        Optional per-neuron offset of shape (N,) added to the logit.
+        Optional offset added to the logit, shape (N,) or (R, N).
 
     :returns: tuple
         (eta, G)
@@ -453,7 +450,7 @@ def compute_eta_G(theta, F1, offset=None):
     # r: (R, N) — sigmoid via BLAS dgemm + SIMD vectorized exp
     logit = F1 @ theta.T
     if offset is not None:
-        logit = logit + offset[np.newaxis, :]
+        logit = logit + offset
     r = 1 / (1 + np.exp(-logit))
     # eta: (N, N+1) — BLAS dgemm
     eta = r.T @ F1
@@ -493,7 +490,7 @@ def e_step_filter(emd):
             v_jax = jnp.asarray(emd.v[:emd.T])
         else:
             V_jax = jnp.zeros((emd.N, 1))
-            v_jax = jnp.zeros((emd.T, 1))
+            v_jax = jnp.zeros((emd.T, emd.R, 1))
         results = _e_step_filter_jax(
             jnp.asarray(emd.spikes[:emd.T]),
             jnp.asarray(emd.FSUM),
@@ -540,14 +537,11 @@ def e_step_filter(emd):
             # Fill F1 in-place (no allocation per time step).
             F1[:, 1:] = emd.spikes[t]
 
-            # Compute observation input offset
+            # Compute observation input offset: (R, N)
             if emd.V is not None:
-                obs_offset = emd.V @ emd.v[t]  # (N,)
-                FSUM_adj = emd.FSUM[t].copy()
-                FSUM_adj[:, 0] += obs_offset
+                obs_offset = emd.v[t] @ emd.V.T  # (R, N)
             else:
                 obs_offset = None
-                FSUM_adj = emd.FSUM[t]
 
             max_dlpo = np.inf
             iterations = 0
@@ -555,7 +549,7 @@ def e_step_filter(emd):
             while max_dlpo > GA_CONVERGENCE:
                 eta, G = compute_eta_G(emd.theta_f[t], F1, offset=obs_offset)
                 diff = emd.theta_f[t] - emd.theta_o[t]
-                dlpo = eta - FSUM_adj + np.matmul(
+                dlpo = eta - emd.FSUM[t] + np.matmul(
                     emd.sigma_o_i[t], diff[..., np.newaxis]
                 ).squeeze(-1)
                 ddlpo = G + emd.sigma_o_i[t]

@@ -380,7 +380,7 @@ def compute_entropy_flow(emd):
         # Stationary case: iterate mean-field to fixed point m*
         theta = emd.theta_s[0].copy()
         if emd.V is not None:
-            theta[:, 0] = theta[:, 0] + emd.V @ emd.v[0]
+            theta[:, 0] = theta[:, 0] + emd.V @ emd.v[0].mean(axis=0)
         m = mp.copy()
         for _ in range(1000):
             m_prev = m.copy()
@@ -398,7 +398,7 @@ def compute_entropy_flow(emd):
             m_p = mp if t == 0 else m
             THETA_st = emd.theta_s[t].copy()
             if emd.V is not None:
-                THETA_st[:, 0] = THETA_st[:, 0] + emd.V @ emd.v[t]
+                THETA_st[:, 0] = THETA_st[:, 0] + emd.V @ emd.v[t].mean(axis=0)
             m = compute_mean_field(THETA_st, m_p)
             sf_bath_t, sr_bath_t, s_bath_t = compute_dissipation(THETA_st, m, m_p)
             sf_bath[t, :] = sf_bath_t

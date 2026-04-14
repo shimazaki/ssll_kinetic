@@ -45,7 +45,7 @@ try:
 
     @jax.jit
     def _log_marginal_jax(sigma_f, sigma_o, sigma_o_i, theta_f, theta_o,
-                          FSUM, spikes_T, V_input, v_input):
+                          FSUM, spikes_T, spikes_current, V_input, v_input):
         """Full log marginal likelihood on device — slogdet, quadratic, PSI."""
         _, logdet_sigma_f = jnp.linalg.slogdet(sigma_f)
         _, logdet_sigma_o = jnp.linalg.slogdet(sigma_o)
@@ -54,16 +54,19 @@ try:
         Sa = jnp.matmul(sigma_o_i, a[..., jnp.newaxis]).squeeze(-1)
         b = 0.5 * jnp.sum(a * Sa, axis=-1)
 
-        # Observation input offset: (T, N)
-        obs_offset = jnp.matmul(v_input, V_input.T)  # (T, N)
+        # Observation input offset: (T, R, N)
+        obs_offset = jnp.einsum('trd,nd->trn', v_input, V_input)
 
         bias = theta_f[:, :, 0][:, jnp.newaxis, :]
         weights = theta_f[:, :, 1:]
         logit = bias + jnp.matmul(spikes_T, jnp.swapaxes(weights, -2, -1))
-        logit = logit + obs_offset[:, jnp.newaxis, :]  # add offset
+        logit = logit + obs_offset
         PSI = jnp.sum(jnp.logaddexp(0, logit), axis=1)
 
-        q = jnp.sum(theta_f * FSUM, axis=-1) + obs_offset * FSUM[:, :, 0] - PSI - b
+        # sum_r x_{t,i,r} * V_i @ v[t,r]
+        obs_spike_sum = jnp.sum(obs_offset * spikes_current, axis=1)  # (T, N)
+
+        q = jnp.sum(theta_f * FSUM, axis=-1) + obs_spike_sum - PSI - b
         return jnp.sum(0.5 * logdet_sigma_f - 0.5 * logdet_sigma_o + q)
 
     _HAS_JAX = True
@@ -95,7 +98,7 @@ def log_marginal(emd):
             v_jax = jnp.asarray(emd.v[:emd.T])
         else:
             V_jax = jnp.zeros((emd.N, 1))
-            v_jax = jnp.zeros((emd.T, 1))
+            v_jax = jnp.zeros((emd.T, emd.R, 1))
         return float(_log_marginal_jax(
             jnp.asarray(emd.sigma_f),
             jnp.asarray(emd.sigma_o),
@@ -104,6 +107,7 @@ def log_marginal(emd):
             jnp.asarray(emd.theta_o),
             jnp.asarray(emd.FSUM),
             jnp.asarray(emd.spikes[:emd.T]),
+            jnp.asarray(emd.spikes[1:emd.T + 1]),
             V_jax,
             v_jax,
         ))
@@ -125,15 +129,18 @@ def log_marginal(emd):
 
     # Add observation input offset
     if emd.V is not None:
-        obs_offset = emd.v[:emd.T] @ emd.V.T  # (T, N)
-        logit = logit + obs_offset[:, np.newaxis, :]
+        obs_offset = np.einsum('trd,nd->trn', emd.v[:emd.T], emd.V)  # (T, R, N)
+        logit = logit + obs_offset
+        # sum_r x_{t,i,r} * V_i @ v[t,r]
+        obs_spike_sum = np.einsum('trn,trn->tn',
+                                   obs_offset, emd.spikes[1:emd.T + 1])  # (T, N)
     else:
-        obs_offset = np.zeros((emd.T, emd.N))
+        obs_spike_sum = 0.0
 
     PSI = np.sum(np.logaddexp(0, logit), axis=1)             # (T, N)
 
-    # 5) Compute q = <theta_f, FSUM> + offset*spike_count - PSI - b
-    q = np.sum(emd.theta_f * emd.FSUM, axis=-1) + obs_offset * emd.FSUM[:, :, 0] - PSI - b
+    # 5) Compute q = <theta_f, FSUM> + obs_spike_sum - PSI - b
+    q = np.sum(emd.theta_f * emd.FSUM, axis=-1) + obs_spike_sum - PSI - b
 
     # 6) Combine determinant and q terms for final log marginal likelihood
     log_p = np.sum(0.5 * logdet_sigma_f - 0.5 * logdet_sigma_o + q)

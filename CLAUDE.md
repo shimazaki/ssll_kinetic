@@ -42,7 +42,7 @@ Single-level Python package (`ssll_kinetic/`) with no subpackages:
   - `compute_dissipation(a, m, m_p)` — per-time-step forward/reverse/net entropy flow per neuron
   - `compute_mean_field(a, m_p)` — mean-field spike probability update
   - Two equivalent formulations: chi-based (`update_S`, `update_S_re`) and h-psi decomposition (`update_S_alt`, `update_S_re_alt`); see Eqs. 47-48, 57-58 in the paper
-- **`testing.py`** — 25 unit tests covering EM, entropy flow, parameter recovery, formulation equivalence, stationary analysis, JAX/numpy parity, JAX scan/numpy parity, exogenous state input (U/u), and observation input (V/v)
+- **`testing.py`** — 27 unit tests covering EM, entropy flow, parameter recovery, formulation equivalence, stationary analysis, JAX/numpy parity, JAX scan/numpy parity, exogenous state input (U/u), observation input (V/v), and trial-specific observation input
 
 ## Important: spike array dtype
 
@@ -56,7 +56,7 @@ Spikes must be `float64`, `float32`, or `int32` — **never `int8`**. The `FSUM`
 - **State input gain U**: `(N, N+1, d_u)` — per-neuron state input gain
 - **State input u**: `(T, d_u)` — exogenous state input signal
 - **Observation input gain V**: `(N, d_v)` — per-neuron observation input gain
-- **Observation input v**: `(T, d_v)` — exogenous observation input signal
+- **Observation input v**: `(T, d_v)` or `(T, R, d_v)` — exogenous observation input signal; 2D broadcasts to all trials, 3D is trial-specific (stored internally as `(T, R, d_v)`)
 
 ## Key Constants
 

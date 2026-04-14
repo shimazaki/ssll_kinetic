@@ -119,10 +119,15 @@ class EMData:
             self.d_u = 0
             self.U = None
 
-        # Observation input
+        # Observation input — accept (T, d_v) or (T, R, d_v)
         if v is not None:
-            self.v = v              # (T, d_v)
-            self.d_v = v.shape[1]
+            v = np.asarray(v)
+            if v.ndim == 2:
+                # Broadcast (T, d_v) → (T, R, d_v)
+                v = np.broadcast_to(v[:, np.newaxis, :],
+                                    (v.shape[0], self.R, v.shape[1])).copy()
+            self.v = v              # (T, R, d_v)
+            self.d_v = v.shape[-1]
             self.V = np.zeros((self.N, self.d_v))
         else:
             self.v = None

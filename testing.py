@@ -1125,5 +1125,88 @@ class TestEstimator(unittest.TestCase):
         print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
 
 
+    def test_26_trial_specific_v(self):
+        """Test trial-specific observation input v with shape (T, R, d_v).
+
+        Generates spikes with trial-specific V*v[t,r] in the observation model,
+        then runs EM to recover V. Also verifies that shared v via 3D shape
+        matches the 2D path.
+        """
+        print("Test Trial-Specific Observation Input v.")
+        start_cpu_time = time.process_time()
+
+        T, R, N = 100, 100, 2
+        d_v = 2
+        rng = np.random.RandomState(42)
+
+        # True V: (N, d_v)
+        V_true = rng.randn(N, d_v) * 0.5
+
+        # Trial-specific observation input: (T, R, d_v)
+        v_3d = rng.randn(T, R, d_v) * 0.5
+
+        # Constant theta
+        theta_const = np.array([[-2.0, 0.3, -0.2],
+                                [-1.8, -0.1, 0.25]])
+        THETA = np.tile(theta_const, (T, 1, 1))
+
+        # Generate spikes with trial-specific V*v[t,r]
+        rng2 = np.random.RandomState(7)
+        spikes = np.zeros((T + 1, R, N))
+        rand_numbers = rng2.rand(T + 1, R, N)
+        spikes[0] = (rand_numbers[0] >= 0.5).astype(int)
+        for t in range(1, T + 1):
+            F_psi = np.concatenate([np.ones((R, 1)), spikes[t - 1]], axis=1)
+            logit = THETA[t - 1] @ F_psi.T  # (N, R)
+            obs_offset = v_3d[t - 1] @ V_true.T  # (R, N)
+            logit = logit + obs_offset.T  # (N, R)
+            prob = 1 / (1 + np.exp(-logit))
+            spikes[t] = (prob.T >= rand_numbers[t]).astype(int)
+
+        # Run EM with trial-specific v
+        emd = ssll_kinetic.run(spikes, max_iter=500, state_cov=0,
+                                v=v_3d, EM_Info=False)
+
+        # V recovery
+        V_est = emd.V
+        corr = np.corrcoef(V_true.ravel(), V_est.ravel())[0, 1]
+        print('V recovery (trial-specific v): corr=%.4f' % corr)
+        print('V_true:', np.round(V_true.ravel(), 3))
+        print('V_est :', np.round(V_est.ravel(), 3))
+        self.assertGreater(corr, 0.9,
+            "V recovery with trial-specific v should be > 0.9 (got %.4f)" %
+            corr)
+
+        # Verify backward compat: shared v via 2D and 3D should match
+        THETA2, spikes2 = generate_test_data(self.T, self.R, self.N)
+        np.random.seed(88)
+        v_2d = np.random.randn(self.T, d_v) * 0.1
+        v_3d_shared = np.broadcast_to(v_2d[:, np.newaxis, :],
+                                       (self.T, self.R, d_v)).copy()
+
+        emd_2d = ssll_kinetic.run(spikes2, max_iter=50, state_cov=0.5,
+                                   v=v_2d, EM_Info=False)
+        emd_3d = ssll_kinetic.run(spikes2, max_iter=50, state_cov=0.5,
+                                   v=v_3d_shared, EM_Info=False)
+
+        theta_diff = np.max(np.abs(emd_2d.theta_s - emd_3d.theta_s))
+        mll_diff = abs(emd_2d.mll - emd_3d.mll)
+        V_diff = np.max(np.abs(emd_2d.V - emd_3d.V))
+        print('2D vs 3D shared v: theta diff=%.2e, mll diff=%.2e, V diff=%.2e'
+              % (theta_diff, mll_diff, V_diff))
+        self.assertLess(theta_diff, 1e-8,
+                        "2D and 3D shared v should give same theta")
+        self.assertLess(mll_diff, 1e-6,
+                        "2D and 3D shared v should give same mll")
+        self.assertLess(V_diff, 1e-8,
+                        "2D and 3D shared v should give same V")
+
+        self.assertTrue(np.isfinite(emd.mll))
+        self.assertLess(emd.iterations, 500)
+
+        end_cpu_time = time.process_time()
+        print('Total CPU time: %.3f seconds' % (end_cpu_time - start_cpu_time))
+
+
 if __name__ == "__main__":
     unittest.main()
