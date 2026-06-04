@@ -33,6 +33,29 @@ try:
     import jax.numpy as jnp
     jax.config.update("jax_enable_x64", True)
 
+    # Threshold for the (R, N, N+1) einsum intermediate: above this the
+    # fused 3-op einsum OOMs in stationary mode (T*R can reach 1e5+), so
+    # scan over N to cap memory at (R, N+1) per step. Below it the einsum
+    # is faster (single fused GPU kernel). Trace-time branch on static
+    # shapes — compiles only one path.
+    _GRAM_EINSUM_BYTES = 2**31  # 2 GiB
+
+    def _gram_scan(w, F1):
+        # G[n,i,j] = sum_r w[r,n] * F1[r,i] * F1[r,j]
+        # Mirrors the numpy fallback's per-neuron loop in compute_eta_G.
+        def step(_, wn):
+            Fw = F1 * wn[:, None]                    # (R, N+1)
+            return None, Fw.T @ F1                   # (N+1, N+1)
+        _, G = jax.lax.scan(step, None, w.T)         # (N, N+1, N+1)
+        return G
+
+    def _gram(w, F1):
+        R, N = w.shape
+        Np1 = F1.shape[1]
+        if R * N * Np1 * 8 > _GRAM_EINSUM_BYTES:
+            return _gram_scan(w, F1)
+        return jnp.einsum('rn,ri,rj->nij', w, F1, F1)
+
     @jax.jit
     def _compute_eta_G_jax(theta, F1, offset=None):
         logit = F1 @ theta.T                         # (R, N)
@@ -41,7 +64,7 @@ try:
         r = jax.nn.sigmoid(logit)                    # (R, N)
         eta = r.T @ F1                               # (N, N+1)
         w = r * (1 - r)                              # (R, N)
-        G = jnp.einsum('rn,ri,rj->nij', w, F1, F1)  # (N, N+1, N+1)
+        G = _gram(w, F1)                             # (N, N+1, N+1)
         return eta, G
 
     def _e_step_filter_jax_fn(spikes_T, FSUM, init_theta, init_cov, state_cov,
@@ -90,7 +113,7 @@ try:
                 r = jax.nn.sigmoid(logit)
                 eta = r.T @ F1_t
                 w = r * (1 - r)
-                G = jnp.einsum('rn,ri,rj->nij', w, F1_t, F1_t)
+                G = _gram(w, F1_t)
 
                 diff = theta - theta_o
                 dlpo = eta - FSUM_t + jnp.matmul(
